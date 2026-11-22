@@ -1,0 +1,546 @@
+// Сквозная проверка прав на живой базе: группы видны всем, ABDev — админ везде.
+const URL = 'https://dfdsuktrnxbztbyslbwo.supabase.co'
+const ANON =
+  'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImRmZHN1a3RybnhienRieXNsYndvIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTUzMzkzMzIsImV4cCI6MjExMDkxNTMzMn0.d2m7ZJPB5dLUga9UNN2vYHMr-Wt22fKxSo87YrYPutE'
+// service_role никогда не хранится в коде — только в переменной окружения.
+// Dashboard → Project Settings → API → service_role
+const SERVICE = process.env.SUPABASE_SERVICE_KEY
+if (!SERVICE) throw new Error('Нужна переменная окружения SUPABASE_SERVICE_KEY')
+
+let failures = 0
+function check(name, ok, extra = '') {
+  console.log(`${ok ? '  OK  ' : ' FAIL '} ${name}${extra ? ' — ' + extra : ''}`)
+  if (!ok) failures++
+}
+
+async function ensureUser(email, password, username) {
+  const r = await fetch(`${URL}/auth/v1/admin/users`, {
+    method: 'POST',
+    headers: { apikey: SERVICE, Authorization: `Bearer ${SERVICE}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email, password, email_confirm: true, user_metadata: { username } }),
+  })
+  if (!r.ok && r.status !== 422) throw new Error(`create ${email}: ${await r.text()}`)
+}
+
+async function signIn(email, password) {
+  const r = await fetch(`${URL}/auth/v1/token?grant_type=password`, {
+    method: 'POST',
+    headers: { apikey: ANON, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email, password }),
+  })
+  const j = await r.json()
+  if (!j.access_token) throw new Error(`signin ${email}: ${JSON.stringify(j)}`)
+  return { token: j.access_token, id: j.user.id }
+}
+
+const H = (t) => ({ apikey: ANON, Authorization: `Bearer ${t}`, 'Content-Type': 'application/json' })
+
+async function rpc(token, fn, args = {}) {
+  const r = await fetch(`${URL}/rest/v1/rpc/${fn}`, { method: 'POST', headers: H(token), body: JSON.stringify(args) })
+  const text = await r.text()
+  if (!r.ok) throw new Error(`${fn}: ${text}`)
+  return text ? JSON.parse(text) : null
+}
+
+/** Как rpc(), но без исключения: нужен для проверок «а вот так нельзя». */
+async function tryRpc(token, fn, args = {}) {
+  const r = await fetch(`${URL}/rest/v1/rpc/${fn}`, { method: 'POST', headers: H(token), body: JSON.stringify(args) })
+  const text = await r.text()
+  return { ok: r.ok, status: r.status, body: text, data: text ? JSON.parse(text) : null }
+}
+
+async function get(token, path) {
+  const r = await fetch(`${URL}/rest/v1/${path}`, { headers: H(token) })
+  const t = await r.text()
+  if (!r.ok) throw new Error(`${path}: ${t}`)
+  return JSON.parse(t)
+}
+
+async function post(token, path, body) {
+  const r = await fetch(`${URL}/rest/v1/${path}`, {
+    method: 'POST',
+    headers: { ...H(token), Prefer: 'return=representation' },
+    body: JSON.stringify(body),
+  })
+  return { ok: r.ok, status: r.status, body: await r.text() }
+}
+
+async function patch(token, path, body) {
+  const r = await fetch(`${URL}/rest/v1/${path}`, {
+    method: 'PATCH',
+    headers: { ...H(token), Prefer: 'return=representation' },
+    body: JSON.stringify(body),
+  })
+  const text = await r.text()
+  let rows = []
+  try {
+    rows = JSON.parse(text)
+  } catch {
+    rows = []
+  }
+  return { ok: r.ok, status: r.status, rows: Array.isArray(rows) ? rows : [], body: text }
+}
+
+// ===== Storage =====
+const PNG_1PX = Buffer.from(
+  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==',
+  'base64',
+)
+
+async function upload(token, bucket, path, body, contentType) {
+  const r = await fetch(`${URL}/storage/v1/object/${bucket}/${path}`, {
+    method: 'POST',
+    headers: {
+      apikey: ANON,
+      Authorization: `Bearer ${token}`,
+      'Content-Type': contentType,
+      'x-upsert': 'true',
+    },
+    body,
+  })
+  return { ok: r.ok, status: r.status, body: await r.text() }
+}
+
+async function download(token, bucket, path) {
+  const r = await fetch(`${URL}/storage/v1/object/${bucket}/${path}`, {
+    headers: { apikey: ANON, Authorization: `Bearer ${token}` },
+  })
+  return { ok: r.ok, status: r.status }
+}
+
+const run = async () => {
+  await ensureUser('friend.test@example.com', 'FriendPass123', 'Friend')
+  await ensureUser('stranger.test@example.com', 'StrangerPass123', 'Stranger')
+
+  const adminPassword = process.env.ADMIN_PASSWORD
+  if (!adminPassword) throw new Error('Нужна переменная окружения ADMIN_PASSWORD')
+  const admin = await signIn('abdev2013@gmail.com', adminPassword)
+  const friend = await signIn('friend.test@example.com', 'FriendPass123')
+  const stranger = await signIn('stranger.test@example.com', 'StrangerPass123')
+  console.log('\n— Аккаунты —')
+  check('ABDev входит по своему паролю', Boolean(admin.token))
+  check('второй и третий пользователь созданы', Boolean(friend.token && stranger.token))
+
+  const me = await get(admin.token, 'profiles?select=username,is_super_admin&id=eq.' + admin.id)
+  check('ABDev помечен главным админом', me[0]?.is_super_admin === true, `username=${me[0]?.username}`)
+
+  console.log('\n— Группа, созданная другим пользователем —')
+  const gid = await rpc(friend.token, 'create_group', { title_in: 'Группа друга', description_in: 'создал не админ' })
+  check('друг создал группу', Boolean(gid))
+
+  const membersOfFriendGroup = await get(
+    admin.token,
+    `conversation_members?select=user_id,role&conversation_id=eq.${gid}`,
+  )
+  const adminRow = membersOfFriendGroup.find((m) => m.user_id === admin.id)
+  check('ABDev автоматически добавлен в чужую группу', Boolean(adminRow))
+  check('…и сразу с ролью admin', adminRow?.role === 'admin')
+
+  const catalogStranger = await rpc(stranger.token, 'list_public_groups', { q: '' })
+  check(
+    'посторонний видит чужую группу в каталоге',
+    catalogStranger.some((g) => g.id === gid),
+    `всего групп: ${catalogStranger.length}`,
+  )
+
+  console.log('\n— Сообщения —')
+  const sent = await post(friend.token, 'messages', {
+    conversation_id: gid,
+    sender_id: friend.id,
+    body: 'Привет из группы друга',
+    client_id: crypto.randomUUID(),
+  })
+  check('друг пишет в свою группу', sent.ok, sent.ok ? '' : sent.body)
+
+  const strangerPost = await post(stranger.token, 'messages', {
+    conversation_id: gid,
+    sender_id: stranger.id,
+    body: 'Я зашёл с улицы',
+    client_id: crypto.randomUUID(),
+  })
+  check('посторонний может писать в открытую группу', strangerPost.ok, strangerPost.ok ? '' : strangerPost.body)
+
+  const adminSees = await get(admin.token, `messages?select=body&conversation_id=eq.${gid}&order=created_at`)
+  check('ABDev читает всю переписку группы', adminSees.length >= 2, `сообщений: ${adminSees.length}`)
+
+  console.log('\n— Личные чаты остаются приватными —')
+  const dm = await rpc(friend.token, 'create_direct_conversation', { peer_id: stranger.id })
+  await post(friend.token, 'messages', {
+    conversation_id: dm,
+    sender_id: friend.id,
+    body: 'секрет',
+    client_id: crypto.randomUUID(),
+  })
+
+  // четвёртый пользователь — обычный, не участник
+  await ensureUser('nosy.test@example.com', 'NosyPass123', 'Nosy')
+  const nosy = await signIn('nosy.test@example.com', 'NosyPass123')
+  const nosySees = await get(nosy.token, `messages?select=body&conversation_id=eq.${dm}`)
+  check('обычный пользователь НЕ видит чужую личную переписку', nosySees.length === 0)
+
+  const nosyWrite = await post(nosy.token, 'messages', {
+    conversation_id: dm,
+    sender_id: nosy.id,
+    body: 'влезаю',
+    client_id: crypto.randomUUID(),
+  })
+  check('обычный пользователь НЕ может писать в чужой личный чат', !nosyWrite.ok, `статус ${nosyWrite.status}`)
+
+  const nosyCatalog = await rpc(nosy.token, 'list_public_groups', { q: '' })
+  check('личный чат не попадает в каталог групп', !nosyCatalog.some((g) => g.id === dm))
+
+  console.log('\n— Модерация —')
+  const msgId = JSON.parse(sent.body)[0].id
+  const del = await fetch(`${URL}/rest/v1/messages?id=eq.${msgId}`, {
+    method: 'PATCH',
+    headers: H(admin.token),
+    body: JSON.stringify({ deleted_at: new Date().toISOString(), body: null }),
+  })
+  check('ABDev удаляет чужое сообщение', del.ok, del.ok ? '' : await del.text())
+
+  const nosyDel = await fetch(`${URL}/rest/v1/messages?id=eq.${msgId}`, {
+    method: 'PATCH',
+    headers: H(nosy.token),
+    body: JSON.stringify({ body: 'подменил' }),
+  })
+  const nosyDelBody = await nosyDel.json().catch(() => [])
+  check('обычный пользователь не правит чужие сообщения', Array.isArray(nosyDelBody) && nosyDelBody.length === 0)
+
+  const myChats = await rpc(admin.token, 'list_conversations')
+  check('список чатов ABDev собирается', Array.isArray(myChats), `чатов: ${myChats.length}`)
+
+  // ================= ЧАСТЬ 2 =================
+  console.log('\n— Профиль —')
+  const bioOwn = await patch(friend.token, `profiles?id=eq.${friend.id}`, { bio: 'люблю тесты' })
+  check('пользователь меняет своё «о себе»', bioOwn.rows[0]?.bio === 'люблю тесты', bioOwn.body.slice(0, 120))
+
+  const bioForeign = await patch(nosy.token, `profiles?id=eq.${friend.id}`, { bio: 'взломано' })
+  check('чужой профиль не редактируется', bioForeign.rows.length === 0, `статус ${bioForeign.status}`)
+
+  const bioVisible = await get(stranger.token, `profiles?select=bio&id=eq.${friend.id}`)
+  check('«о себе» видно другим пользователям', bioVisible[0]?.bio === 'люблю тесты')
+
+  console.log('\n— Аватары (Storage) —')
+  const ownAvatar = await upload(friend.token, 'avatars', `users/${friend.id}/avatar.webp`, PNG_1PX, 'image/png')
+  check('свою аватарку загрузить можно', ownAvatar.ok, ownAvatar.ok ? '' : ownAvatar.body.slice(0, 120))
+
+  const foreignAvatar = await upload(nosy.token, 'avatars', `users/${friend.id}/avatar.webp`, PNG_1PX, 'image/png')
+  check('чужую аватарку подменить нельзя', !foreignAvatar.ok, `статус ${foreignAvatar.status}`)
+
+  const publicAvatar = await fetch(`${URL}/storage/v1/object/public/avatars/users/${friend.id}/avatar.webp`)
+  check('аватарка доступна по публичной ссылке', publicAvatar.ok, `статус ${publicAvatar.status}`)
+
+  const groupAvatarByAdmin = await upload(friend.token, 'avatars', `groups/${gid}/avatar.webp`, PNG_1PX, 'image/png')
+  check('админ группы ставит аватарку группе', groupAvatarByAdmin.ok, groupAvatarByAdmin.body.slice(0, 120))
+
+  const groupAvatarByNosy = await upload(nosy.token, 'avatars', `groups/${gid}/avatar.webp`, PNG_1PX, 'image/png')
+  check('посторонний не меняет аватарку группы', !groupAvatarByNosy.ok, `статус ${groupAvatarByNosy.status}`)
+
+  const groupAvatarBySuper = await upload(admin.token, 'avatars', `groups/${gid}/avatar.webp`, PNG_1PX, 'image/png')
+  check('ABDev меняет аватарку любой группы', groupAvatarBySuper.ok, groupAvatarBySuper.body.slice(0, 120))
+
+  console.log('\n— Редактирование группы —')
+  const renameByAdmin = await patch(friend.token, `conversations?id=eq.${gid}`, {
+    title: 'Группа друга v2',
+    description: 'описание обновлено',
+  })
+  check('админ группы правит название и описание', renameByAdmin.rows[0]?.title === 'Группа друга v2')
+
+  const renameByNosy = await patch(nosy.token, `conversations?id=eq.${gid}`, { title: 'моя группа' })
+  check('посторонний не правит чужую группу', renameByNosy.rows.length === 0, `статус ${renameByNosy.status}`)
+
+  const renameBySuper = await patch(admin.token, `conversations?id=eq.${gid}`, { title: 'Группа друга v3' })
+  check('ABDev правит любую группу', renameBySuper.rows[0]?.title === 'Группа друга v3')
+
+  console.log('\n— Вложения —')
+  const groupFile = `${gid}/smoke-group.txt`
+  const upGroup = await upload(friend.token, 'attachments', groupFile, 'файл в группе', 'text/plain')
+  check('участник загружает файл в группу', upGroup.ok, upGroup.ok ? '' : upGroup.body.slice(0, 120))
+
+  const readGroupFileByStranger = await download(stranger.token, 'attachments', groupFile)
+  check('файл открытой группы читается участниками каталога', readGroupFileByStranger.ok, `статус ${readGroupFileByStranger.status}`)
+
+  // путь всегда новый: приложение тоже кладёт вложения под случайным именем,
+  // перезапись существующего файла политиками не разрешена
+  const dmFile = `${dm}/smoke-secret-${Date.now()}.txt`
+  const upDm = await upload(friend.token, 'attachments', dmFile, 'секретный файл', 'text/plain')
+  check('файл в личный чат загружается', upDm.ok, upDm.ok ? '' : upDm.body.slice(0, 120))
+
+  const dmFileByOwner = await download(friend.token, 'attachments', dmFile)
+  check('участник личного чата читает вложение', dmFileByOwner.ok, `статус ${dmFileByOwner.status}`)
+
+  const dmFileByNosy = await download(nosy.token, 'attachments', dmFile)
+  check('посторонний НЕ читает вложение личного чата', !dmFileByNosy.ok, `статус ${dmFileByNosy.status}`)
+
+  const fileMessage = await post(friend.token, 'messages', {
+    conversation_id: gid,
+    sender_id: friend.id,
+    body: null,
+    kind: 'file',
+    client_id: crypto.randomUUID(),
+    attachment_path: groupFile,
+    attachment_mime: 'text/plain',
+    attachment_size: 26,
+    attachment_name: 'smoke-group.txt',
+  })
+  check('сообщение-вложение без текста сохраняется', fileMessage.ok, fileMessage.ok ? '' : fileMessage.body.slice(0, 160))
+
+  console.log('\n— Ответы и правка сообщений —')
+  const parent = await post(friend.token, 'messages', {
+    conversation_id: gid,
+    sender_id: friend.id,
+    body: 'исходное сообщение',
+    client_id: crypto.randomUUID(),
+  })
+  const parentId = JSON.parse(parent.body)[0].id
+  const reply = await post(stranger.token, 'messages', {
+    conversation_id: gid,
+    sender_id: stranger.id,
+    body: 'это ответ',
+    reply_to: parentId,
+    client_id: crypto.randomUUID(),
+  })
+  check('ответ на сообщение сохраняется', reply.ok, reply.ok ? '' : reply.body.slice(0, 160))
+
+  const withParent = await get(
+    admin.token,
+    `messages?select=body,parent:reply_to(body)&id=eq.${JSON.parse(reply.body)[0].id}`,
+  )
+  check('цитата исходного сообщения подтягивается', withParent[0]?.parent?.body === 'исходное сообщение')
+
+  const edited = await patch(friend.token, `messages?id=eq.${parentId}`, {
+    body: 'исправленное сообщение',
+    edited_at: new Date().toISOString(),
+  })
+  check('автор правит своё сообщение', edited.rows[0]?.body === 'исправленное сообщение')
+
+  console.log('\n— Поиск —')
+  const rareWord = `криптоморфный${Date.now()}`
+  await post(friend.token, 'messages', {
+    conversation_id: gid,
+    sender_id: friend.id,
+    body: `тестовое слово ${rareWord} внутри группы`,
+    client_id: crypto.randomUUID(),
+  })
+  const foundByStranger = await rpc(stranger.token, 'search_messages', { q: rareWord, conv_in: null })
+  check('поиск находит сообщение в открытой группе', foundByStranger.length >= 1, `совпадений: ${foundByStranger.length}`)
+
+  const dmWord = `тайнослово${Date.now()}`
+  await post(friend.token, 'messages', {
+    conversation_id: dm,
+    sender_id: friend.id,
+    body: `личное ${dmWord}`,
+    client_id: crypto.randomUUID(),
+  })
+  const dmFoundByOwner = await rpc(friend.token, 'search_messages', { q: dmWord, conv_in: null })
+  check('участник находит своё сообщение в личном чате', dmFoundByOwner.length >= 1)
+
+  const dmFoundByNosy = await rpc(nosy.token, 'search_messages', { q: dmWord, conv_in: null })
+  check('поиск не выдаёт чужую личную переписку', dmFoundByNosy.length === 0, `совпадений: ${dmFoundByNosy.length}`)
+
+  console.log('\n— Реакции —')
+  const firstReaction = await tryRpc(stranger.token, 'toggle_reaction', { msg_in: parentId, emoji_in: '👍' })
+  check('реакция ставится', firstReaction.ok && firstReaction.data === true, firstReaction.ok ? '' : firstReaction.body.slice(0, 160))
+
+  await rpc(admin.token, 'toggle_reaction', { msg_in: parentId, emoji_in: '👍' })
+  await rpc(admin.token, 'toggle_reaction', { msg_in: parentId, emoji_in: '🔥' })
+  const reactionRows = await get(admin.token, `message_reactions?select=emoji,user_id&message_id=eq.${parentId}`)
+  check('реакции разных людей и разные эмодзи складываются', reactionRows.length === 3, `строк: ${reactionRows.length}`)
+
+  const second = await rpc(stranger.token, 'toggle_reaction', { msg_in: parentId, emoji_in: '👍' })
+  const afterRemove = await get(admin.token, `message_reactions?select=user_id&message_id=eq.${parentId}&emoji=eq.${encodeURIComponent('👍')}`)
+  check('повторное нажатие снимает свою реакцию', second === false && afterRemove.length === 1)
+
+  const dmMsg = await post(friend.token, 'messages', {
+    conversation_id: dm,
+    sender_id: friend.id,
+    body: 'сообщение для реакции в личке',
+    client_id: crypto.randomUUID(),
+  })
+  const dmMsgId = JSON.parse(dmMsg.body)[0].id
+  await rpc(stranger.token, 'toggle_reaction', { msg_in: dmMsgId, emoji_in: '❤️' })
+
+  const nosyReaction = await tryRpc(nosy.token, 'toggle_reaction', { msg_in: dmMsgId, emoji_in: '😂' })
+  check('посторонний не реагирует на сообщение чужого личного чата', !nosyReaction.ok, `status ${nosyReaction.status}`)
+
+  const nosySeesReactions = await get(nosy.token, `message_reactions?select=emoji&message_id=eq.${dmMsgId}`)
+  check('посторонний не видит реакции в чужом личном чате', nosySeesReactions.length === 0, `строк: ${nosySeesReactions.length}`)
+
+  const mineInDm = await get(stranger.token, `message_reactions?select=emoji&message_id=eq.${dmMsgId}`)
+  check('участник личного чата видит реакции', mineInDm.length === 1)
+
+  console.log('\n— Закреплённые сообщения —')
+  const pinByCreator = await tryRpc(friend.token, 'pin_message', { msg_in: parentId, pinned: true })
+  const pinnedRow = await get(admin.token, `messages?select=pinned_at,pinned_by&id=eq.${parentId}`)
+  check('админ группы закрепляет сообщение', pinByCreator.ok && pinnedRow[0]?.pinned_at !== null)
+  check('в закреплении записан автор', pinnedRow[0]?.pinned_by === friend.id)
+
+  const pinByStranger = await tryRpc(stranger.token, 'pin_message', { msg_in: parentId, pinned: false })
+  check('обычный участник не откручивает закреп', !pinByStranger.ok, `status ${pinByStranger.status}`)
+
+  const pinList = await get(stranger.token, `messages?select=id&conversation_id=eq.${gid}&pinned_at=not.is.null`)
+  check('закреплённое видно всем в группе', pinList.length === 1)
+
+  const unpinBySuper = await tryRpc(admin.token, 'pin_message', { msg_in: parentId, pinned: false })
+  const afterUnpin = await get(admin.token, `messages?select=pinned_at&id=eq.${parentId}`)
+  check('ABDev снимает любой закреп', unpinBySuper.ok && afterUnpin[0]?.pinned_at === null)
+
+  const pinInDm = await tryRpc(friend.token, 'pin_message', { msg_in: dmMsgId, pinned: true })
+  check('в личном чате закрепляет любой участник', pinInDm.ok, pinInDm.ok ? '' : pinInDm.body.slice(0, 160))
+
+  const pinByNosy = await tryRpc(nosy.token, 'pin_message', { msg_in: dmMsgId, pinned: false })
+  check('посторонний не трогает закреп в чужом личном чате', !pinByNosy.ok, `status ${pinByNosy.status}`)
+
+  console.log('\n— Голосовые сообщения —')
+  const voice = await post(friend.token, 'messages', {
+    conversation_id: dm,
+    sender_id: friend.id,
+    kind: 'voice',
+    attachment_path: `${dm}/voice-smoke-${Date.now()}.webm`,
+    attachment_name: 'voice.webm',
+    attachment_mime: 'audio/webm',
+    attachment_size: 18240,
+    duration_ms: 3200,
+    client_id: crypto.randomUUID(),
+  })
+  check('голосовое сообщение сохраняется', voice.ok, voice.ok ? '' : voice.body.slice(0, 160))
+
+  const voiceRow = voice.ok ? JSON.parse(voice.body)[0] : {}
+  check('длительность записи сохранена', voiceRow.duration_ms === 3200)
+
+  const badKind = await post(friend.token, 'messages', {
+    conversation_id: dm,
+    sender_id: friend.id,
+    kind: 'видео',
+    client_id: crypto.randomUUID(),
+  })
+  check('неизвестный тип сообщения база не принимает', !badKind.ok, `status ${badKind.status}`)
+
+  const convList = await rpc(friend.token, 'list_conversations')
+  const dmPreview = convList.find((c) => c.id === dm)
+  check('в списке чатов голосовое показано как «🎤 Голосовое сообщение»', dmPreview?.last_message_body === '🎤 Голосовое сообщение', `получено: ${dmPreview?.last_message_body}`)
+
+  console.log('\n— Капсула времени —')
+  const SERVICE_H = { apikey: SERVICE, Authorization: `Bearer ${SERVICE}`, 'Content-Type': 'application/json' }
+  const capsuleText = 'Письмо в будущее'
+  const openAt = new Date(Date.now() + 3600_000).toISOString()
+  const capsuleId = await rpc(friend.token, 'send_capsule', {
+    conv_in: dm,
+    body_in: capsuleText,
+    open_at_in: openAt,
+    client_id_in: crypto.randomUUID(),
+    reply_to_in: null,
+  })
+  check('капсула отправляется', Boolean(capsuleId))
+
+  const capsuleMsg = await get(friend.token, `messages?select=kind,body,open_at&id=eq.${capsuleId}`)
+  check(
+    'в чате лежит сообщение-капсула без текста',
+    capsuleMsg[0]?.kind === 'capsule' && capsuleMsg[0]?.body === null,
+    `kind=${capsuleMsg[0]?.kind}`,
+  )
+  check('срок вскрытия сохранён в сообщении', Boolean(capsuleMsg[0]?.open_at))
+
+  const sealedForPeer = await get(stranger.token, `message_capsules?select=body&message_id=eq.${capsuleId}`)
+  check('собеседник НЕ читает запечатанный текст', sealedForPeer.length === 0)
+
+  const sealedForSuper = await get(admin.token, `message_capsules?select=body&message_id=eq.${capsuleId}`)
+  check('даже главный админ не вскрывает капсулу раньше срока', sealedForSuper.length === 0)
+
+  const sealedForAuthor = await get(friend.token, `message_capsules?select=body&message_id=eq.${capsuleId}`)
+  check('автор видит собственный текст', sealedForAuthor[0]?.body === capsuleText)
+
+  const embedSealed = await get(
+    stranger.token,
+    `messages?select=id,capsule:message_capsules(body)&id=eq.${capsuleId}`,
+  )
+  const sealedEmbed = embedSealed[0]?.capsule
+  check(
+    'в обычной выдаче сообщений тела капсулы нет',
+    sealedEmbed === null || (Array.isArray(sealedEmbed) && sealedEmbed.length === 0),
+    `получено: ${JSON.stringify(sealedEmbed)}`,
+  )
+
+  const pastCapsule = await tryRpc(friend.token, 'send_capsule', {
+    conv_in: dm,
+    body_in: 'срок в прошлом',
+    open_at_in: new Date(Date.now() - 60_000).toISOString(),
+  })
+  check('срок в прошлом база не принимает', !pastCapsule.ok, `статус ${pastCapsule.status}`)
+
+  const foreignCapsule = await tryRpc(nosy.token, 'send_capsule', {
+    conv_in: dm,
+    body_in: 'я тут мимо проходил',
+    open_at_in: openAt,
+  })
+  check('в чужой личный чат капсулу не положить', !foreignCapsule.ok, `статус ${foreignCapsule.status}`)
+
+  const directInsert = await post(stranger.token, 'message_capsules', {
+    message_id: capsuleId,
+    conversation_id: dm,
+    body: 'подмена',
+    open_at: openAt,
+  })
+  check('напрямую в таблицу капсул писать нельзя', !directInsert.ok, `статус ${directInsert.status}`)
+
+  const capsulePreview = await rpc(stranger.token, 'list_conversations')
+  check(
+    'в списке чатов капсула подписана «⏳ Капсула времени»',
+    capsulePreview.find((c) => c.id === dm)?.last_message_body === '⏳ Капсула времени',
+    `получено: ${capsulePreview.find((c) => c.id === dm)?.last_message_body}`,
+  )
+
+  // переводим часы вперёд: срок наступил
+  await fetch(`${URL}/rest/v1/message_capsules?message_id=eq.${capsuleId}`, {
+    method: 'PATCH',
+    headers: SERVICE_H,
+    body: JSON.stringify({ open_at: new Date(Date.now() - 1000).toISOString() }),
+  })
+
+  const openedForPeer = await get(stranger.token, `message_capsules?select=body&message_id=eq.${capsuleId}`)
+  check('после срока текст открывается собеседнику', openedForPeer[0]?.body === capsuleText)
+
+  const openedForNosy = await get(nosy.token, `message_capsules?select=body&message_id=eq.${capsuleId}`)
+  check('посторонний не читает капсулу и после срока', openedForNosy.length === 0)
+
+  const capsuleDeleted = await patch(friend.token, `messages?id=eq.${capsuleId}`, {
+    deleted_at: new Date().toISOString(),
+    body: null,
+  })
+  const capsuleLeftover = await get(friend.token, `message_capsules?select=body&message_id=eq.${capsuleId}`)
+  check(
+    'удалили сообщение — запечатанный текст стёрт вместе с ним',
+    capsuleDeleted.ok && capsuleLeftover.length === 0,
+  )
+
+  // ===== уборка: база остаётся чистой, тестовые группы не висят в каталоге =====
+  console.log('\n— Уборка —')
+  const SH = { apikey: SERVICE, Authorization: `Bearer ${SERVICE}`, 'Content-Type': 'application/json' }
+
+  for (const [bucket, prefixes] of [
+    ['attachments', [groupFile, dmFile]],
+    ['avatars', [`users/${friend.id}/avatar.webp`, `groups/${gid}/avatar.webp`]],
+  ]) {
+    await fetch(`${URL}/storage/v1/object/${bucket}`, {
+      method: 'DELETE',
+      headers: SH,
+      body: JSON.stringify({ prefixes }),
+    })
+  }
+
+  await fetch(`${URL}/rest/v1/conversations?id=in.(${gid},${dm})`, { method: 'DELETE', headers: SH })
+  for (const u of [friend, stranger, nosy]) {
+    await fetch(`${URL}/auth/v1/admin/users/${u.id}`, { method: 'DELETE', headers: SH })
+  }
+
+  const leftovers = await get(admin.token, `conversations?select=id&id=in.(${gid},${dm})`)
+  check('тестовые группы, диалоги, файлы и аккаунты удалены', leftovers.length === 0)
+
+  console.log(`\n${failures === 0 ? 'ВСЕ ПРОВЕРКИ ПРОШЛИ' : `ПРОВАЛЕНО ПРОВЕРОК: ${failures}`}`)
+  process.exit(failures === 0 ? 0 : 1)
+}
+
+run().catch((e) => {
+  console.error('Сбой теста:', e.message)
+  process.exit(1)
+})
