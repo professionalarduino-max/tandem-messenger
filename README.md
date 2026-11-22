@@ -252,7 +252,14 @@ SUPABASE_SERVICE_KEY=... ADMIN_PASSWORD=... node scripts/smoke.mjs
 
 # интерфейс в браузере: вход → каталог → отправка сообщения
 TEST_PASSWORD=... node scripts/ui-check.mjs
+
+# опубликованная версия: базовый путь, service worker, манифест, прямые ссылки
+node scripts/pages-check.mjs [адрес]
 ```
+
+Последняя проверка на боевом адресе — 11 из 11: страница открывается, вход отрисован, ассеты
+и манифест ведут в подпапку, service worker зарегистрирован на `/tandem-messenger/`, Supabase
+отвечает с этого домена, прямая ссылка на чат поднимает приложение, консоль чистая.
 
 `smoke.mjs` сам за собой убирает: тестовые группы, диалоги, файлы и аккаунты удаляются в конце.
 `ui-check.mjs` требует системных библиотек Chromium (`npx playwright install --with-deps chromium`).
@@ -287,6 +294,7 @@ public/
 scripts/
   smoke.mjs              72 проверки прав на живой базе
   ui-check.mjs           сценарий в браузере
+  pages-check.mjs        проверка опубликованной версии
 .github/workflows/
   ci.yml                 lint + build на каждый пуш
   pages.yml              сборка и публикация на GitHub Pages
