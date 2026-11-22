@@ -1,5 +1,5 @@
 import { supabase } from '../supabase'
-import type { Profile, UserSearchResult } from '../../types/db'
+import type { AdminStats, DirectoryUser, Profile, UserSearchResult } from '../../types/db'
 
 export async function getMyProfile(userId: string): Promise<Profile | null> {
   const { data, error } = await supabase.from('profiles').select('*').eq('id', userId).maybeSingle()
@@ -25,6 +25,20 @@ export async function searchUsers(query: string): Promise<UserSearchResult[]> {
   const { data, error } = await supabase.rpc('search_users', { q: query })
   if (error) throw error
   return (data ?? []) as UserSearchResult[]
+}
+
+/** Каталог: все, кто пользуется мессенджером, вместе со мной. Пустой запрос — весь список. */
+export async function listUsers(query = ''): Promise<DirectoryUser[]> {
+  const { data, error } = await supabase.rpc('list_users', { q: query })
+  if (error) throw error
+  return (data ?? []) as DirectoryUser[]
+}
+
+/** Сводка для админ-панели. База отдаёт её только главному админу. */
+export async function getAdminStats(): Promise<AdminStats> {
+  const { data, error } = await supabase.rpc('admin_stats')
+  if (error) throw error
+  return data as AdminStats
 }
 
 export async function touchLastSeen() {

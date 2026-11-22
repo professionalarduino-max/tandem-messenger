@@ -1,7 +1,9 @@
+import { Icon } from '../components/Icon'
+
 export default function Empty() {
   return (
     <div className="hidden h-full flex-col items-center justify-center gap-2 text-center md:flex">
-      <div className="text-5xl">💬</div>
+      <Icon name="chat" size={56} className="text-[#2a3340]" />
       <p className="text-[#9aa7b4]">Выберите чат слева или откройте вкладку «Группы»</p>
       <p className="text-sm text-[#64727f]">Все группы видны всем пользователям — заходите в любую</p>
     </div>

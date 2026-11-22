@@ -418,7 +418,17 @@ const run = async () => {
 
   const convList = await rpc(friend.token, 'list_conversations')
   const dmPreview = convList.find((c) => c.id === dm)
-  check('в списке чатов голосовое показано как «🎤 Голосовое сообщение»', dmPreview?.last_message_body === '🎤 Голосовое сообщение', `получено: ${dmPreview?.last_message_body}`)
+  // текст превью без значков: тип сообщения интерфейс рисует иконкой по last_message_kind
+  check(
+    'в списке чатов голосовое подписано «Голосовое сообщение»',
+    dmPreview?.last_message_body === 'Голосовое сообщение',
+    `получено: ${dmPreview?.last_message_body}`,
+  )
+  check(
+    'и помечено типом voice для иконки',
+    dmPreview?.last_message_kind === 'voice',
+    `получено: ${dmPreview?.last_message_kind}`,
+  )
 
   console.log('\n— Капсула времени —')
   const SERVICE_H = { apikey: SERVICE, Authorization: `Bearer ${SERVICE}`, 'Content-Type': 'application/json' }
@@ -485,9 +495,14 @@ const run = async () => {
 
   const capsulePreview = await rpc(stranger.token, 'list_conversations')
   check(
-    'в списке чатов капсула подписана «⏳ Капсула времени»',
-    capsulePreview.find((c) => c.id === dm)?.last_message_body === '⏳ Капсула времени',
+    'в списке чатов капсула подписана «Капсула времени»',
+    capsulePreview.find((c) => c.id === dm)?.last_message_body === 'Капсула времени',
     `получено: ${capsulePreview.find((c) => c.id === dm)?.last_message_body}`,
+  )
+  check(
+    'и помечена типом capsule для иконки',
+    capsulePreview.find((c) => c.id === dm)?.last_message_kind === 'capsule',
+    `получено: ${capsulePreview.find((c) => c.id === dm)?.last_message_kind}`,
   )
 
   // переводим часы вперёд: срок наступил
@@ -512,6 +527,30 @@ const run = async () => {
     'удалили сообщение — запечатанный текст стёрт вместе с ним',
     capsuleDeleted.ok && capsuleLeftover.length === 0,
   )
+
+  // ===== каталог людей и статистика =====
+  console.log('\n— Каталог людей —')
+  const directory = await rpc(friend.token, 'list_users')
+  const inDirectory = (id) => directory.some((u) => u.id === id)
+  check('виден каждый, кто пользуется мессенджером', inDirectory(admin.id) && inDirectory(stranger.id), `всего: ${directory.length}`)
+  check('себя каталог тоже показывает и помечает', directory.find((u) => u.id === friend.id)?.is_me === true)
+  check('у главного админа стоит флаг', directory.find((u) => u.id === admin.id)?.is_super_admin === true)
+  check(
+    'у строки есть счётчик сообщений',
+    typeof directory.find((u) => u.id === friend.id)?.message_count === 'number',
+  )
+  const found = await rpc(stranger.token, 'list_users', { q: 'friend' })
+  check('поиск по каталогу работает', found.some((u) => u.id === friend.id), `найдено: ${found.length}`)
+
+  console.log('\n— Статистика —')
+  const denied = await tryRpc(friend.token, 'admin_stats')
+  check('обычному пользователю статистика недоступна', !denied.ok, `статус ${denied.status}`)
+  const stats = await rpc(admin.token, 'admin_stats')
+  check('главный админ получает сводку', Boolean(stats?.generated_at))
+  check('в сводке есть люди, чаты и сообщения', stats.users.total > 0 && stats.conversations.total > 0 && stats.messages.total > 0,
+    `${stats.users.total} / ${stats.conversations.total} / ${stats.messages.total}`)
+  check('график считает 14 дней', Array.isArray(stats.daily) && stats.daily.length === 14, `дней: ${stats.daily?.length}`)
+  check('есть топ активных и список новичков', Array.isArray(stats.top_users) && Array.isArray(stats.newcomers))
 
   // ===== уборка: база остаётся чистой, тестовые группы не висят в каталоге =====
   console.log('\n— Уборка —')

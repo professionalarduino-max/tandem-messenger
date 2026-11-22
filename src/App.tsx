@@ -4,6 +4,7 @@ import Login from './pages/Login'
 import Shell from './pages/Shell'
 import ChatView from './pages/ChatView'
 import Settings from './pages/Settings'
+import Admin from './pages/Admin'
 import Empty from './pages/Empty'
 
 export default function App() {
@@ -23,6 +24,7 @@ export default function App() {
         <Route index element={<Empty />} />
         <Route path="c/:id" element={<ChatView />} />
         <Route path="settings" element={<Settings />} />
+        <Route path="admin" element={<Admin />} />
       </Route>
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>

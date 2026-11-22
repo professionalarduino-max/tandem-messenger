@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { Avatar, AdminBadge } from './Avatar'
 import { AvatarPicker } from './AvatarPicker'
+import { Icon } from './Icon'
 import {
   addMember,
   deleteConversation,
@@ -85,8 +86,8 @@ export function GroupSettingsModal({
       >
         <div className="flex items-center justify-between border-b border-[#2a3340] px-5 py-3">
           <h2 className="font-semibold">Настройки группы</h2>
-          <button onClick={onClose} className="text-[#9aa7b4] hover:text-white">
-            ✕
+          <button onClick={onClose} title="Закрыть" className="text-[#9aa7b4] hover:text-white">
+            <Icon name="close" size={18} />
           </button>
         </div>
 

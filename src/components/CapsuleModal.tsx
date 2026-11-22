@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { fullDateTime } from '../lib/format'
+import { Icon } from './Icon'
 
 type Preset = { id: string; label: string; minutes: number }
 
@@ -66,7 +67,7 @@ export function CapsuleModal({
         className="w-full max-w-[460px] rounded-2xl border border-[#2a3340] bg-[#161b22] p-6"
       >
         <h2 className="mb-1 flex items-center gap-2 text-lg font-semibold">
-          <span>⏳</span> Капсула времени
+          <Icon name="hourglass" size={20} className="text-[#d29922]" /> Капсула времени
         </h2>
         <p className="mb-5 text-sm text-[#9aa7b4]">
           Сообщение появится в чате сразу, но прочитать его можно будет только в назначенный срок.

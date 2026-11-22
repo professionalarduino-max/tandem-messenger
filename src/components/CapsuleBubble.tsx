@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { fullDateTime, untilLabel } from '../lib/format'
+import { Icon } from './Icon'
 import type { Message } from '../types/db'
 
 /**
@@ -46,7 +47,7 @@ export function CapsuleBubble({
     return (
       <div>
         <div className={`mb-1.5 flex items-center gap-1.5 rounded-lg border px-2 py-1 text-xs ${frame}`}>
-          <span>⏳</span>
+          <Icon name="hourglass" size={14} />
           <span className="opacity-80">
             Капсула вскрыта{openAt ? ` · ${fullDateTime(openAt)}` : ''}
           </span>
@@ -59,7 +60,7 @@ export function CapsuleBubble({
   return (
     <div className={`min-w-[200px] rounded-xl border px-3 py-2.5 ${frame}`}>
       <div className="flex items-center gap-2 text-sm font-semibold">
-        <span>⏳</span>
+        <Icon name="hourglass" size={16} />
         <span>Капсула времени</span>
       </div>
       {openAt && (

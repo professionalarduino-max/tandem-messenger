@@ -61,10 +61,15 @@ export function fullDateTime(iso: string) {
   })
 }
 
-export function plural(n: number, one: string, few: string, many: string) {
+/** Только слово в нужной форме — когда число уже выведено отдельно. */
+export function pluralWord(n: number, one: string, few: string, many: string) {
   const mod10 = n % 10
   const mod100 = n % 100
-  if (mod10 === 1 && mod100 !== 11) return `${n} ${one}`
-  if (mod10 >= 2 && mod10 <= 4 && (mod100 < 10 || mod100 >= 20)) return `${n} ${few}`
-  return `${n} ${many}`
+  if (mod10 === 1 && mod100 !== 11) return one
+  if (mod10 >= 2 && mod10 <= 4 && (mod100 < 10 || mod100 >= 20)) return few
+  return many
+}
+
+export function plural(n: number, one: string, few: string, many: string) {
+  return `${n} ${pluralWord(n, one, few, many)}`
 }

@@ -26,3 +26,6 @@ dist-ssr
 # локальные ключи
 .env.local
 .vercel
+
+# артефакт проверки интерфейса
+screenshot.png

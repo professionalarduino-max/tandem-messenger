@@ -9,13 +9,14 @@ import {
   listConversations,
   listPublicGroups,
 } from '../lib/api/conversations'
-import { searchUsers } from '../lib/api/profiles'
+import { listUsers } from '../lib/api/profiles'
 import { READ_EVENT } from '../lib/api/messages'
 import { subscribeToDirectory, subscribeToInbox, type InboxEvent } from '../lib/api/realtime'
-import { listTime, plural, isOnline } from '../lib/format'
+import { listTime, plural, isOnline, lastSeenLabel } from '../lib/format'
 import { setTitleBadge, showMessageNotification } from '../lib/notify'
+import { Icon, type IconName } from '../components/Icon'
 import { APP_NAME } from '../config'
-import type { ConversationPreview, PublicGroup, UserSearchResult } from '../types/db'
+import type { ConversationPreview, DirectoryUser, PublicGroup } from '../types/db'
 
 type Tab = 'chats' | 'groups' | 'people'
 
@@ -29,7 +30,7 @@ export default function Shell() {
   const [query, setQuery] = useState('')
   const [chats, setChats] = useState<ConversationPreview[]>([])
   const [groups, setGroups] = useState<PublicGroup[]>([])
-  const [people, setPeople] = useState<UserSearchResult[]>([])
+  const [people, setPeople] = useState<DirectoryUser[]>([])
   const [modal, setModal] = useState(false)
   const tabRef = useRef(tab)
   const queryRef = useRef(query)
@@ -69,7 +70,7 @@ export default function Shell() {
     try {
       if (t === 'chats') await refreshInbox()
       else if (t === 'groups') setGroups(await listPublicGroups(q))
-      else setPeople(await searchUsers(q))
+      else setPeople(await listUsers(q))
     } catch (e) {
       console.error(e)
     }
@@ -89,10 +90,10 @@ export default function Shell() {
 
       const body =
         m.kind === 'voice'
-          ? '🎤 Голосовое сообщение'
+          ? 'Голосовое сообщение'
           : m.kind === 'capsule'
-            ? '⏳ Капсула времени'
-            : m.body?.trim() || (m.attachment_name ? `📎 ${m.attachment_name}` : 'Новое сообщение')
+            ? 'Капсула времени'
+            : m.body?.trim() || m.attachment_name || 'Новое сообщение'
 
       showMessageNotification({
         title: conv.title ?? APP_NAME,
@@ -163,7 +164,11 @@ export default function Shell() {
     nav(`/c/${g.id}`)
   }
 
-  async function openDirect(u: UserSearchResult) {
+  async function openDirect(u: DirectoryUser) {
+    if (u.is_me) {
+      nav('/settings')
+      return
+    }
     const id = await createDirect(u.id)
     nav(`/c/${id}`)
   }
@@ -172,12 +177,15 @@ export default function Shell() {
     (c.title ?? '').toLowerCase().includes(query.toLowerCase()),
   )
 
+  // настройки и админ-панель на телефоне занимают весь экран вместо сайдбара
+  const fullScreen = loc.pathname === '/settings' || loc.pathname === '/admin'
+
   return (
     <div className="flex h-full">
       {/* ===== Сайдбар ===== */}
       <aside
         className={`flex w-full shrink-0 flex-col border-r border-[#2a3340] bg-[#0e1116] md:w-[340px] ${
-          openId || loc.pathname === '/settings' ? 'hidden md:flex' : 'flex'
+          openId || fullScreen ? 'hidden md:flex' : 'flex'
         }`}
       >
         <header className="flex items-center gap-3 border-b border-[#2a3340] px-4 py-3">
@@ -194,12 +202,21 @@ export default function Shell() {
             </div>
             <div className="truncate text-xs text-[#64727f]">@{profile?.username}</div>
           </div>
+          {profile?.is_super_admin && (
+            <Link
+              to="/admin"
+              className="rounded-lg px-2 py-1.5 text-[#d29922] transition hover:bg-[#1c2430]"
+              title="Админ-панель"
+            >
+              <Icon name="stats" size={19} />
+            </Link>
+          )}
           <Link
             to="/settings"
             className="rounded-lg px-2 py-1.5 text-[#9aa7b4] transition hover:bg-[#1c2430] hover:text-white"
             title="Настройки"
           >
-            ⚙
+            <Icon name="settings" size={19} />
           </Link>
         </header>
 
@@ -224,20 +241,31 @@ export default function Shell() {
         </div>
 
         <div className="flex gap-2 p-3">
-          <input
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            placeholder={
-              tab === 'people' ? 'Найти по юзернейму…' : tab === 'groups' ? 'Найти группу…' : 'Поиск…'
-            }
-            className="w-full rounded-lg border border-[#2a3340] bg-[#161b22] px-3 py-2 text-sm outline-none placeholder:text-[#64727f] focus:border-[#58a6ff]"
-          />
+          <div className="relative flex-1">
+            <Icon
+              name="search"
+              size={15}
+              className="pointer-events-none absolute top-1/2 left-3 -translate-y-1/2 text-[#64727f]"
+            />
+            <input
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder={
+                tab === 'people'
+                  ? 'Найти человека…'
+                  : tab === 'groups'
+                    ? 'Найти группу…'
+                    : 'Поиск…'
+              }
+              className="w-full rounded-lg border border-[#2a3340] bg-[#161b22] py-2 pr-3 pl-9 text-sm outline-none placeholder:text-[#64727f] focus:border-[#58a6ff]"
+            />
+          </div>
           <button
             onClick={() => setModal(true)}
             title="Создать группу"
-            className="shrink-0 rounded-lg bg-[#58a6ff] px-3 font-bold text-[#0e1116] transition hover:bg-[#79b8ff]"
+            className="flex shrink-0 items-center justify-center rounded-lg bg-[#58a6ff] px-3 text-[#0e1116] transition hover:bg-[#79b8ff]"
           >
-            +
+            <Icon name="plus" size={18} className="stroke-[2.4]" />
           </button>
         </div>
 
@@ -271,6 +299,13 @@ export default function Shell() {
                       </span>
                     </div>
                     <div className="flex items-center gap-2">
+                      {previewIcon(c.last_message_kind) && (
+                        <Icon
+                          name={previewIcon(c.last_message_kind)!}
+                          size={13}
+                          className="text-[#64727f]"
+                        />
+                      )}
                       <span className="truncate text-sm text-[#9aa7b4]">
                         {c.type === 'group' && c.last_message_sender ? `${c.last_message_sender}: ` : ''}
                         {c.last_message_body ?? 'нет сообщений'}
@@ -317,30 +352,57 @@ export default function Shell() {
 
           {tab === 'people' && (
             <>
+              <Hint>
+                {query.trim()
+                  ? `Найдено: ${plural(people.length, 'человек', 'человека', 'человек')}`
+                  : `Все, кто пользуется ${APP_NAME} — ${plural(people.length, 'человек', 'человека', 'человек')}`}
+              </Hint>
               {people.map((u) => (
                 <button
                   key={u.id}
                   onClick={() => openDirect(u)}
                   className="flex w-full items-center gap-3 rounded-xl px-2 py-2.5 text-left transition hover:bg-[#161b22]"
                 >
-                  <Avatar name={u.display_name ?? u.username} seed={u.id} url={u.avatar_url} />
+                  <div className="relative">
+                    <Avatar name={u.display_name ?? u.username} seed={u.id} url={u.avatar_url} />
+                    {isOnline(u.last_seen_at) && (
+                      <span className="absolute right-0 bottom-0 h-3 w-3 rounded-full border-2 border-[#0e1116] bg-[#3fb950]" />
+                    )}
+                  </div>
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center gap-2 truncate font-medium">
                       {u.display_name ?? u.username}
                       {u.is_super_admin && <AdminBadge />}
+                      {u.is_me && (
+                        <span className="shrink-0 rounded border border-[#2a3340] px-1.5 py-0.5 text-[10px] text-[#64727f]">
+                          вы
+                        </span>
+                      )}
                     </div>
-                    <div className="truncate text-sm text-[#9aa7b4]">@{u.username}</div>
+                    <div className="truncate text-sm text-[#9aa7b4]">
+                      @{u.username} · {lastSeenLabel(u.last_seen_at)}
+                    </div>
+                  </div>
+                  <div className="flex shrink-0 items-center gap-1 text-xs text-[#64727f]">
+                    <Icon name="message" size={13} />
+                    {u.message_count}
                   </div>
                 </button>
               ))}
-              {people.length === 0 && <Hint>Начните вводить юзернейм, чтобы найти человека.</Hint>}
+              {people.length === 0 && (
+                <Hint>
+                  {query.trim()
+                    ? 'Никого не нашли. Попробуйте другое имя.'
+                    : 'Кроме вас тут пока никого нет — позовите друга.'}
+                </Hint>
+              )}
             </>
           )}
         </div>
       </aside>
 
       {/* ===== Основная область ===== */}
-      <main className={`min-w-0 flex-1 ${openId || loc.pathname === '/settings' ? 'flex' : 'hidden md:flex'} flex-col`}>
+      <main className={`min-w-0 flex-1 ${openId || fullScreen ? 'flex' : 'hidden md:flex'} flex-col`}>
         <Outlet />
       </main>
 
@@ -356,6 +418,14 @@ export default function Shell() {
       )}
     </div>
   )
+}
+
+/** Значок перед превью чата: голосовое, файл, капсула. Для обычного текста — ничего. */
+function previewIcon(kind: ConversationPreview['last_message_kind']): IconName | null {
+  if (kind === 'voice') return 'mic'
+  if (kind === 'file') return 'clip'
+  if (kind === 'capsule') return 'hourglass'
+  return null
 }
 
 function Hint({ children }: { children: React.ReactNode }) {

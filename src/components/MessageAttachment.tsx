@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { signedUrl } from '../lib/api/storage'
 import { humanSize, isImage } from '../lib/image'
+import { Icon } from './Icon'
 import type { Message } from '../types/db'
 
 export function MessageAttachment({
@@ -48,7 +49,7 @@ export function MessageAttachment({
       download={message.attachment_name ?? true}
       className="mb-1 flex max-w-[320px] items-center gap-3 rounded-xl border border-white/15 bg-black/15 px-3 py-2 transition hover:bg-black/25"
     >
-      <span className="text-xl">📎</span>
+      <Icon name="file" size={22} className="opacity-80" />
       <span className="min-w-0 flex-1">
         <span className="block truncate text-sm font-medium">{message.attachment_name ?? 'файл'}</span>
         <span className="block text-xs opacity-70">{humanSize(message.attachment_size)}</span>

@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import { useAuth } from '../hooks/useAuth'
 import { AdminBadge } from '../components/Avatar'
 import { AvatarPicker } from '../components/AvatarPicker'
+import { Icon } from '../components/Icon'
 import { updateProfile } from '../lib/api/profiles'
 import { removeUserAvatar, uploadUserAvatar } from '../lib/api/storage'
 import { signOut } from '../lib/api/auth'
@@ -100,8 +101,8 @@ export default function Settings() {
   return (
     <div className="h-full overflow-y-auto">
       <header className="flex items-center gap-3 border-b border-[#2a3340] px-4 py-3">
-        <button onClick={() => nav('/')} className="text-[#9aa7b4]">
-          ←
+        <button onClick={() => nav('/')} title="Назад" className="text-[#9aa7b4] transition hover:text-white">
+          <Icon name="back" size={20} />
         </button>
         <h1 className="font-semibold">Настройки</h1>
       </header>

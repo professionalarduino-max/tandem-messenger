@@ -1,4 +1,5 @@
 import { useEffect } from 'react'
+import { Icon } from './Icon'
 
 export function Lightbox({
   url,
@@ -32,11 +33,15 @@ export function Lightbox({
           href={url}
           download={name ?? true}
           onClick={(e) => e.stopPropagation()}
-          className="text-[#58a6ff] hover:underline"
+          className="flex items-center gap-1.5 text-[#58a6ff] hover:underline"
         >
+          <Icon name="download" size={16} />
           Скачать
         </a>
-        <button onClick={onClose}>Закрыть ✕</button>
+        <button onClick={onClose} className="flex items-center gap-1.5 transition hover:text-white">
+          <Icon name="close" size={16} />
+          Закрыть
+        </button>
       </div>
     </div>
   )

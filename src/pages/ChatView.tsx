@@ -5,6 +5,7 @@ import { Avatar, AdminBadge } from '../components/Avatar'
 import { CapsuleBubble } from '../components/CapsuleBubble'
 import { CapsuleModal } from '../components/CapsuleModal'
 import { GroupSettingsModal } from '../components/GroupSettingsModal'
+import { Icon, type IconName } from '../components/Icon'
 import { Lightbox } from '../components/Lightbox'
 import { MessageAttachment } from '../components/MessageAttachment'
 import { PinnedBar } from '../components/PinnedBar'
@@ -555,7 +556,7 @@ export default function ChatView() {
       {/* ===== шапка ===== */}
       <header className="flex items-center gap-3 border-b border-[#2a3340] bg-[#0e1116] px-4 py-3">
         <button onClick={() => nav('/')} className="text-[#9aa7b4] md:hidden" title="Назад">
-          ←
+          <Icon name="back" size={20} />
         </button>
         <Avatar name={title} seed={conv.id} url={avatarUrl} size={38} square={conv.type === 'group'} />
         <button
@@ -587,7 +588,7 @@ export default function ChatView() {
           }`}
           title="Поиск по чату"
         >
-          🔍
+          <Icon name="search" size={18} />
         </button>
 
         {conv.type === 'group' && !myMembership && (
@@ -604,7 +605,7 @@ export default function ChatView() {
             className="rounded-lg px-2 py-1.5 text-[#9aa7b4] transition hover:bg-[#1c2430] hover:text-white"
             title="Настройки группы"
           >
-            ⚙
+            <Icon name="settings" size={18} />
           </button>
         )}
       </header>
@@ -640,8 +641,12 @@ export default function ChatView() {
               <p className="mt-1.5 text-sm leading-relaxed text-[#9aa7b4]">{peer.profile.bio}</p>
             )}
           </div>
-          <button onClick={() => setPeerCard(false)} className="text-[#64727f] hover:text-white">
-            ✕
+          <button
+            onClick={() => setPeerCard(false)}
+            title="Свернуть"
+            className="text-[#64727f] hover:text-white"
+          >
+            <Icon name="close" size={16} />
           </button>
         </div>
       )}
@@ -743,22 +748,22 @@ export default function ChatView() {
                 {mine && !m.deleted_at && !m.pending && (
                   <div className="flex items-center gap-1 self-center opacity-0 transition group-hover:opacity-100">
                     <ReactionPicker onPick={(emoji) => onToggleReaction(m.id, emoji)} />
-                    <IconBtn title="Ответить" onClick={() => setReplyTo(m)}>
-                      ↩
-                    </IconBtn>
+                    <IconBtn icon="reply" title="Ответить" onClick={() => setReplyTo(m)} />
                     {canPin && (
-                      <IconBtn title={m.pinned_at ? 'Открепить' : 'Закрепить'} onClick={() => onTogglePin(m)}>
-                        📌
-                      </IconBtn>
+                      <IconBtn
+                        icon="pin"
+                        title={m.pinned_at ? 'Открепить' : 'Закрепить'}
+                        onClick={() => onTogglePin(m)}
+                      />
                     )}
                     {canEdit && (
-                      <IconBtn title="Изменить" onClick={() => setEditing({ id: m.id, body: m.body ?? '' })}>
-                        ✎
-                      </IconBtn>
+                      <IconBtn
+                        icon="edit"
+                        title="Изменить"
+                        onClick={() => setEditing({ id: m.id, body: m.body ?? '' })}
+                      />
                     )}
-                    <IconBtn title="Удалить" onClick={() => onDelete(m)}>
-                      🗑
-                    </IconBtn>
+                    <IconBtn icon="trash" title="Удалить" onClick={() => onDelete(m)} />
                   </div>
                 )}
 
@@ -788,7 +793,7 @@ export default function ChatView() {
                       <span className="block font-semibold opacity-80">
                         {m.parent.sender?.display_name ?? m.parent.sender?.username ?? 'сообщение'}
                       </span>
-                      <span className="block truncate opacity-70">{quoteOf(m.parent)}</span>
+                      <Quote q={m.parent} className="opacity-70" />
                     </button>
                   )}
 
@@ -803,7 +808,7 @@ export default function ChatView() {
                   )}
                   {!m.deleted_at && !m.attachment_path && m.attachment_name && (
                     <div className="mb-1 flex max-w-[320px] items-center gap-2 rounded-xl border border-white/15 bg-black/15 px-3 py-2 text-sm">
-                      <span>{m.kind === 'voice' ? '🎤' : '📎'}</span>
+                      <Icon name={m.kind === 'voice' ? 'mic' : 'file'} size={16} />
                       <span className="min-w-0 flex-1 truncate">
                         {m.kind === 'voice' ? `Голосовое ${durationLabel(m.duration_ms)}` : m.attachment_name}
                       </span>
@@ -857,10 +862,10 @@ export default function ChatView() {
                       mine ? 'text-white/60' : 'text-[#64727f]'
                     }`}
                   >
-                    {m.pinned_at && <span title="Закреплено">📌</span>}
+                    {m.pinned_at && <Icon name="pin" size={12} title="Закреплено" />}
                     {m.edited_at && !m.deleted_at && <span>изменено</span>}
                     <span>{timeShort(m.created_at)}</span>
-                    {m.pending && <span>⏳</span>}
+                    {m.pending && <Icon name="clock" size={12} title="Отправляется" />}
                     {m.failed && <span className="text-red-300">не отправлено</span>}
                   </div>
 
@@ -878,19 +883,15 @@ export default function ChatView() {
                 {!mine && !m.deleted_at && !m.pending && (
                   <div className="flex items-center gap-1 self-center opacity-0 transition group-hover:opacity-100">
                     <ReactionPicker onPick={(emoji) => onToggleReaction(m.id, emoji)} />
-                    <IconBtn title="Ответить" onClick={() => setReplyTo(m)}>
-                      ↩
-                    </IconBtn>
+                    <IconBtn icon="reply" title="Ответить" onClick={() => setReplyTo(m)} />
                     {canPin && (
-                      <IconBtn title={m.pinned_at ? 'Открепить' : 'Закрепить'} onClick={() => onTogglePin(m)}>
-                        📌
-                      </IconBtn>
+                      <IconBtn
+                        icon="pin"
+                        title={m.pinned_at ? 'Открепить' : 'Закрепить'}
+                        onClick={() => onTogglePin(m)}
+                      />
                     )}
-                    {isAdmin && (
-                      <IconBtn title="Удалить" onClick={() => onDelete(m)}>
-                        🗑
-                      </IconBtn>
-                    )}
+                    {isAdmin && <IconBtn icon="trash" title="Удалить" onClick={() => onDelete(m)} />}
                   </div>
                 )}
               </div>
@@ -907,10 +908,14 @@ export default function ChatView() {
               <div className="text-xs font-semibold text-[#58a6ff]">
                 Ответ · {replyTo.sender?.display_name ?? replyTo.sender?.username ?? 'сообщение'}
               </div>
-              <div className="truncate text-[#9aa7b4]">{quoteOf(replyTo)}</div>
+              <Quote q={replyTo} className="text-[#9aa7b4]" />
             </div>
-            <button onClick={() => setReplyTo(null)} className="text-[#64727f] hover:text-white">
-              ✕
+            <button
+              onClick={() => setReplyTo(null)}
+              title="Отменить ответ"
+              className="text-[#64727f] hover:text-white"
+            >
+              <Icon name="close" size={16} />
             </button>
           </div>
         )}
@@ -920,14 +925,18 @@ export default function ChatView() {
             {filePreview ? (
               <img src={filePreview} alt="" className="h-10 w-10 rounded-md object-cover" />
             ) : (
-              <span className="text-xl">📎</span>
+              <Icon name="file" size={22} className="text-[#9aa7b4]" />
             )}
             <div className="min-w-0 flex-1">
               <div className="truncate">{file.name}</div>
               <div className="text-xs text-[#64727f]">{humanSize(file.size)}</div>
             </div>
-            <button onClick={() => setFile(null)} className="text-[#64727f] hover:text-white">
-              ✕
+            <button
+              onClick={() => setFile(null)}
+              title="Убрать файл"
+              className="text-[#64727f] hover:text-white"
+            >
+              <Icon name="close" size={16} />
             </button>
           </div>
         )}
@@ -969,17 +978,17 @@ export default function ChatView() {
             type="button"
             onClick={() => fileInput.current?.click()}
             title="Прикрепить файл"
-            className="shrink-0 rounded-xl border border-[#2a3340] px-3 text-lg text-[#9aa7b4] transition hover:text-white"
+            className="flex shrink-0 items-center justify-center rounded-xl border border-[#2a3340] px-3 text-[#9aa7b4] transition hover:text-white"
           >
-            📎
+            <Icon name="clip" size={20} />
           </button>
           <button
             type="button"
             onClick={() => setCapsule(true)}
             title="Капсула времени: сообщение откроется в назначенный срок"
-            className="shrink-0 rounded-xl border border-[#2a3340] px-3 text-lg text-[#9aa7b4] transition hover:border-[#d29922] hover:text-white"
+            className="flex shrink-0 items-center justify-center rounded-xl border border-[#2a3340] px-3 text-[#9aa7b4] transition hover:border-[#d29922] hover:text-[#d29922]"
           >
-            ⏳
+            <Icon name="hourglass" size={20} />
           </button>
           <textarea
             value={text}
@@ -1009,16 +1018,17 @@ export default function ChatView() {
               type="button"
               onClick={startRecording}
               title="Записать голосовое"
-              className="shrink-0 rounded-xl border border-[#2a3340] px-4 text-lg text-[#9aa7b4] transition hover:border-[#58a6ff] hover:text-white"
+              className="flex shrink-0 items-center justify-center rounded-xl border border-[#2a3340] px-4 text-[#9aa7b4] transition hover:border-[#58a6ff] hover:text-white"
             >
-              🎤
+              <Icon name="mic" size={20} />
             </button>
           ) : (
             <button
               disabled={!text.trim() && !file}
-              className="shrink-0 rounded-xl bg-[#58a6ff] px-4 font-semibold text-[#0e1116] transition hover:bg-[#79b8ff] disabled:opacity-40"
+              title="Отправить"
+              className="flex shrink-0 items-center justify-center rounded-xl bg-[#58a6ff] px-4 text-[#0e1116] transition hover:bg-[#79b8ff] disabled:opacity-40"
             >
-              ➤
+              <Icon name="send" size={20} />
             </button>
           )}
         </form>
@@ -1060,14 +1070,36 @@ export default function ChatView() {
   )
 }
 
+type QuoteLike = Pick<MessageQuote, 'body' | 'attachment_name' | 'kind' | 'deleted_at'>
+
 /** Текст цитаты: удалённый оригинал так и подписываем, а не «вложением». */
-function quoteOf(q: Pick<MessageQuote, 'body' | 'attachment_name' | 'kind' | 'deleted_at'>) {
+function quoteOf(q: QuoteLike) {
   if (q.deleted_at) return 'сообщение удалено'
-  if (q.kind === 'voice') return '🎤 Голосовое сообщение'
-  if (q.kind === 'capsule') return '⏳ Капсула времени'
+  if (q.kind === 'voice') return 'Голосовое сообщение'
+  if (q.kind === 'capsule') return 'Капсула времени'
   if (q.body) return q.body
-  if (q.attachment_name) return `📎 ${q.attachment_name}`
+  if (q.attachment_name) return q.attachment_name
   return 'вложение'
+}
+
+/** Цитата одной строкой: тип сообщения показываем иконкой, а не текстом. */
+function Quote({ q, className = '' }: { q: QuoteLike; className?: string }) {
+  const icon: IconName | null = q.deleted_at
+    ? null
+    : q.kind === 'voice'
+      ? 'mic'
+      : q.kind === 'capsule'
+        ? 'hourglass'
+        : q.body
+          ? null
+          : 'clip'
+
+  return (
+    <span className={`flex items-center gap-1 ${className}`}>
+      {icon && <Icon name={icon} size={12} />}
+      <span className="truncate">{quoteOf(q)}</span>
+    </span>
+  )
 }
 
 /** Ссылка на локальный файл: создаётся один раз и освобождается, когда файл сменился. */
@@ -1086,11 +1118,11 @@ function useObjectUrl(file: File | null) {
 }
 
 function IconBtn({
-  children,
+  icon,
   title,
   onClick,
 }: {
-  children: React.ReactNode
+  icon: IconName
   title: string
   onClick: () => void
 }) {
@@ -1099,9 +1131,9 @@ function IconBtn({
       type="button"
       title={title}
       onClick={onClick}
-      className="rounded-md px-1.5 py-1 text-xs text-[#64727f] transition hover:bg-[#1c2430] hover:text-white"
+      className="rounded-md px-1.5 py-1 text-[#64727f] transition hover:bg-[#1c2430] hover:text-white"
     >
-      {children}
+      <Icon name={icon} size={16} />
     </button>
   )
 }

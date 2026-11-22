@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { signedUrl } from '../lib/api/storage'
 import { durationLabel } from '../lib/voice'
+import { Icon } from './Icon'
 import type { Message } from '../types/db'
 
 /** Полоска из 28 столбиков — простая «псевдоволна», рисуется от id сообщения. */
@@ -96,11 +97,11 @@ export function VoicePlayer({ message, mine }: { message: Message; mine: boolean
         onClick={toggle}
         disabled={!url}
         title={playing ? 'Пауза' : 'Слушать'}
-        className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-sm disabled:opacity-50 ${
+        className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-full disabled:opacity-50 ${
           mine ? 'bg-white/20 text-white' : 'bg-[#58a6ff] text-[#0e1116]'
         }`}
       >
-        {playing ? '❚❚' : '▶'}
+        <Icon name={playing ? 'pause' : 'play'} size={16} filled />
       </button>
 
       <div

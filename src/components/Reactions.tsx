@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { Icon } from './Icon'
 import type { Reaction } from '../types/db'
 
 export const QUICK_EMOJI = ['👍', '❤️', '😂', '🔥', '👏', '😮', '😢', '🎉']
@@ -59,9 +60,9 @@ export function ReactionPicker({ onPick }: { onPick: (emoji: string) => void }) 
         title="Реакция"
         onClick={() => setOpen((v) => !v)}
         onBlur={() => setTimeout(() => setOpen(false), 150)}
-        className="rounded-md px-1.5 py-1 text-xs text-[#64727f] transition hover:bg-[#1c2430] hover:text-white"
+        className="rounded-md px-1.5 py-1 text-[#64727f] transition hover:bg-[#1c2430] hover:text-white"
       >
-        🙂
+        <Icon name="smile" size={16} />
       </button>
       {open && (
         <div className="absolute bottom-full left-1/2 z-30 mb-1 flex -translate-x-1/2 gap-0.5 rounded-xl border border-[#2a3340] bg-[#161b22] p-1 shadow-xl">

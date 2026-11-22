@@ -32,11 +32,12 @@ await page.getByPlaceholder(/Сообщение/).waitFor({ timeout: 10000 })
 const text = `Проверка связи ${new Date().toLocaleTimeString('ru-RU')}`
 await page.getByPlaceholder(/Сообщение/).fill(text)
 await page.keyboard.press('Enter')
-await page.getByText(text).waitFor({ timeout: 10000 })
+// exact: тот же текст попадает и в превью чата на боковой панели
+await page.getByText(text, { exact: true }).waitFor({ timeout: 10000 })
 console.log('  OK   сообщение отправлено и отрисовано в ленте')
 
 await page.reload({ waitUntil: 'networkidle' })
-await page.getByText(text).waitFor({ timeout: 15000 })
+await page.getByText(text, { exact: true }).waitFor({ timeout: 15000 })
 console.log('  OK   после перезагрузки сессия и история на месте')
 
 await page.screenshot({ path: 'screenshot.png', fullPage: false })

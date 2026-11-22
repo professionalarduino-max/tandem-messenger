@@ -1,12 +1,13 @@
 import { useState } from 'react'
 import { durationLabel } from '../lib/voice'
+import { Icon } from './Icon'
 import type { Message } from '../types/db'
 
 export function previewOf(m: Message) {
-  if (m.kind === 'voice') return `🎤 Голосовое ${durationLabel(m.duration_ms)}`
-  if (m.kind === 'capsule') return m.capsule?.body ?? '⏳ Капсула времени'
+  if (m.kind === 'voice') return `Голосовое ${durationLabel(m.duration_ms)}`
+  if (m.kind === 'capsule') return m.capsule?.body ?? 'Капсула времени'
   if (m.body) return m.body
-  if (m.attachment_name) return `📎 ${m.attachment_name}`
+  if (m.attachment_name) return m.attachment_name
   return 'сообщение'
 }
 
@@ -29,7 +30,7 @@ export function PinnedBar({
 
   return (
     <div className="flex items-center gap-3 border-b border-[#2a3340] bg-[#11161d] px-4 py-2">
-      <span className="shrink-0 text-[#58a6ff]">📌</span>
+      <Icon name="pin" size={16} className="text-[#58a6ff]" />
       <button
         onClick={() => {
           onJump(current.id)
@@ -52,7 +53,7 @@ export function PinnedBar({
           title="Открепить"
           className="shrink-0 text-[#64727f] transition hover:text-white"
         >
-          ✕
+          <Icon name="close" size={16} />
         </button>
       )}
     </div>
