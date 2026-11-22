@@ -1,13 +1,16 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { useAuth } from '../hooks/useAuth'
+import { useProfileCard } from '../hooks/useProfileCard'
 import { Avatar, AdminBadge } from '../components/Avatar'
 import { CapsuleBubble } from '../components/CapsuleBubble'
 import { CapsuleModal } from '../components/CapsuleModal'
 import { GroupSettingsModal } from '../components/GroupSettingsModal'
 import { Icon, type IconName } from '../components/Icon'
 import { Lightbox } from '../components/Lightbox'
+import { MentionBox, type MentionHandle } from '../components/MentionBox'
 import { MessageAttachment } from '../components/MessageAttachment'
+import { MessageText, mentionsUser } from '../components/MessageText'
 import { PinnedBar } from '../components/PinnedBar'
 import { Reactions, ReactionPicker } from '../components/Reactions'
 import { VoicePlayer } from '../components/VoicePlayer'
@@ -30,16 +33,18 @@ import {
   subscribeToDirectory,
   subscribeToTyping,
 } from '../lib/api/realtime'
+import { muteActive, pinConversationForAll } from '../lib/api/moderation'
 import { humanSize, isImage } from '../lib/image'
 import { durationLabel, VoiceRecorder, voiceSupported } from '../lib/voice'
-import { dayLabel, lastSeenLabel, plural, timeShort } from '../lib/format'
+import { dayLabel, lastSeenLabel, plural, timeShort, untilLabel } from '../lib/format'
 import type { Conversation, Member, Message, MessageQuote, SearchHit } from '../types/db'
 
 const MAX_JUMP_PAGES = 10
 
 export default function ChatView() {
   const { id } = useParams<{ id: string }>()
-  const { profile } = useAuth()
+  const { profile, moderation } = useAuth()
+  const { open: openProfile } = useProfileCard()
   const nav = useNavigate()
 
   const [conv, setConv] = useState<Conversation | null>(null)
@@ -56,7 +61,7 @@ export default function ChatView() {
   const [lightbox, setLightbox] = useState<{ url: string; name: string | null } | null>(null)
   const [settings, setSettings] = useState(false)
   const [capsule, setCapsule] = useState(false)
-  const [peerCard, setPeerCard] = useState(false)
+  const [caret, setCaret] = useState(0)
   const [searchOpen, setSearchOpen] = useState(false)
   const [searchQuery, setSearchQuery] = useState('')
   const [hits, setHits] = useState<SearchHit[]>([])
@@ -69,6 +74,8 @@ export default function ChatView() {
 
   const scroller = useRef<HTMLDivElement>(null)
   const fileInput = useRef<HTMLInputElement>(null)
+  const input = useRef<HTMLTextAreaElement>(null)
+  const mention = useRef<MentionHandle>(null)
   const bubbles = useRef(new Map<string, HTMLDivElement>())
   const atBottom = useRef(true)
   const cursor = useRef<string | undefined>(undefined)
@@ -78,6 +85,9 @@ export default function ChatView() {
   const pinnedIds = useRef(new Set<string>())
 
   const me = profile?.id
+  // бан и мут проверяет сама база, в интерфейсе просто объясняем, почему не выходит писать
+  const banned = Boolean(moderation?.banned_at)
+  const muted = !banned && muteActive(moderation)
   const myMembership = members.find((m) => m.user_id === me)
   const isAdmin = Boolean(profile?.is_super_admin || myMembership?.role === 'admin')
   const canPin = conv?.type === 'group' ? isAdmin : Boolean(myMembership)
@@ -107,7 +117,6 @@ export default function ChatView() {
     setSendError(null)
     setSettings(false)
     setCapsule(false)
-    setPeerCard(false)
     setReplyTo(null)
     setEditing(null)
     setFile(null)
@@ -317,6 +326,29 @@ export default function ChatView() {
     if (!f) return
     setSendError(null)
     setFile(f)
+  }
+
+  /** Главный админ закрепляет чат у всех и заодно добавляет туда всех пользователей. */
+  async function pinForAll() {
+    if (!conv) return
+    try {
+      await pinConversationForAll(conv.id, !conv.pinned_at)
+      setConv(await getConversation(conv.id))
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e))
+    }
+  }
+
+  /** Подставляет выбранный юзернейм вместо набранного «@…». */
+  function insertMention(username: string, start: number) {
+    const next = `${text.slice(0, start)}@${username} ${text.slice(caret)}`
+    const pos = start + username.length + 2
+    setText(next)
+    setCaret(pos)
+    requestAnimationFrame(() => {
+      input.current?.focus()
+      input.current?.setSelectionRange(pos, pos)
+    })
   }
 
   async function send(e?: React.FormEvent, voice?: { file: File; durationMs: number }) {
@@ -558,15 +590,31 @@ export default function ChatView() {
         <button onClick={() => nav('/')} className="text-[#9aa7b4] md:hidden" title="Назад">
           <Icon name="back" size={20} />
         </button>
-        <Avatar name={title} seed={conv.id} url={avatarUrl} size={38} square={conv.type === 'group'} />
         <button
-          onClick={() => (conv.type === 'group' ? setSettings(true) : setPeerCard((v) => !v))}
-          className="min-w-0 flex-1 text-left"
-          title={conv.type === 'group' ? 'Настройки группы' : 'Профиль'}
+          onClick={() => (conv.type === 'group' ? setSettings(true) : peer && openProfile(peer.user_id))}
+          title={conv.type === 'group' ? 'Настройки группы' : 'Открыть профиль'}
+          className="shrink-0"
         >
-          <div className="truncate font-semibold">
+          <Avatar
+            name={title}
+            seed={conv.id}
+            url={avatarUrl}
+            size={38}
+            square={conv.type === 'group'}
+          />
+        </button>
+        <button
+          onClick={() => (conv.type === 'group' ? setSettings(true) : peer && openProfile(peer.user_id))}
+          className="min-w-0 flex-1 text-left"
+          title={conv.type === 'group' ? 'Настройки группы' : 'Открыть профиль'}
+        >
+          <div className="flex items-center gap-1.5 truncate font-semibold">
             {conv.type === 'group' ? '# ' : ''}
             {title}
+            {conv.is_home && <Icon name="pin" size={13} title="Главный чат" className="text-[#d29922]" />}
+            {!conv.is_home && conv.pinned_at && (
+              <Icon name="pin" size={13} title="Закреплён у всех" className="text-[#58a6ff]" />
+            )}
           </div>
           <div className="truncate text-xs text-[#9aa7b4]">
             {typing.length > 0 ? (
@@ -599,6 +647,17 @@ export default function ChatView() {
             Вступить
           </button>
         )}
+        {profile?.is_super_admin && conv.type === 'group' && !conv.is_home && (
+          <button
+            onClick={pinForAll}
+            className={`rounded-lg px-2 py-1.5 transition hover:bg-[#1c2430] ${
+              conv.pinned_at ? 'text-[#58a6ff]' : 'text-[#9aa7b4] hover:text-white'
+            }`}
+            title={conv.pinned_at ? 'Открепить у всех' : 'Закрепить у всех'}
+          >
+            <Icon name="pin" size={18} />
+          </button>
+        )}
         {conv.type === 'group' && (
           <button
             onClick={() => setSettings(true)}
@@ -619,37 +678,6 @@ export default function ChatView() {
           if (target) await onTogglePin(target)
         }}
       />
-
-      {/* профиль собеседника */}
-      {peerCard && peer && (
-        <div className="flex items-start gap-3 border-b border-[#2a3340] bg-[#11161d] px-4 py-3">
-          <Avatar
-            name={peer.profile.display_name ?? peer.profile.username}
-            seed={peer.user_id}
-            url={peer.profile.avatar_url}
-            size={48}
-          />
-          <div className="min-w-0 flex-1">
-            <div className="flex items-center gap-2 font-semibold">
-              {peer.profile.display_name ?? peer.profile.username}
-              {peer.profile.is_super_admin && <AdminBadge />}
-            </div>
-            <div className="text-xs text-[#64727f]">
-              @{peer.profile.username} · {lastSeenLabel(peer.profile.last_seen_at)}
-            </div>
-            {peer.profile.bio && (
-              <p className="mt-1.5 text-sm leading-relaxed text-[#9aa7b4]">{peer.profile.bio}</p>
-            )}
-          </div>
-          <button
-            onClick={() => setPeerCard(false)}
-            title="Свернуть"
-            className="text-[#64727f] hover:text-white"
-          >
-            <Icon name="close" size={16} />
-          </button>
-        </div>
-      )}
 
       {/* поиск */}
       {searchOpen && (
@@ -736,12 +764,18 @@ export default function ChatView() {
                 className={`group mb-2 flex gap-2 ${mine ? 'justify-end' : 'justify-start'}`}
               >
                 {!mine && (
-                  <Avatar
-                    name={m.sender?.display_name ?? m.sender?.username}
-                    seed={m.sender_id ?? 'x'}
-                    url={m.sender?.avatar_url ?? null}
-                    size={30}
-                  />
+                  <button
+                    onClick={() => m.sender_id && openProfile(m.sender_id)}
+                    title={m.sender?.username ? `Профиль @${m.sender.username}` : 'Профиль'}
+                    className="h-[30px] shrink-0 self-end"
+                  >
+                    <Avatar
+                      name={m.sender?.display_name ?? m.sender?.username}
+                      seed={m.sender_id ?? 'x'}
+                      url={m.sender?.avatar_url ?? null}
+                      size={30}
+                    />
+                  </button>
                 )}
 
                 {/* кнопки действий */}
@@ -774,13 +808,23 @@ export default function ChatView() {
                       : 'rounded-bl-md border border-[#2a3340] bg-[#161b22]'
                   } ${m.failed ? 'border border-red-500/50' : ''} ${
                     highlight === m.id ? 'ring-2 ring-[#58a6ff]' : ''
+                  } ${
+                    !mine && mentionsUser(m.body, profile?.username)
+                      ? 'border-l-2 border-l-[#d29922]'
+                      : ''
                   }`}
                 >
                   {!mine && conv.type === 'group' && (
-                    <div className="mb-0.5 flex items-center gap-1.5 text-xs font-semibold text-[#58a6ff]">
+                    <button
+                      onClick={() => m.sender_id && openProfile(m.sender_id)}
+                      className="mb-0.5 flex items-center gap-1.5 text-xs font-semibold text-[#58a6ff] hover:underline"
+                    >
                       {m.sender?.display_name ?? m.sender?.username ?? 'Аноним'}
+                      {m.sender?.username && (
+                        <span className="font-normal text-[#64727f]">@{m.sender.username}</span>
+                      )}
                       {m.sender?.is_super_admin && <AdminBadge />}
-                    </div>
+                    </button>
                   )}
 
                   {m.parent && !m.deleted_at && (
@@ -851,7 +895,7 @@ export default function ChatView() {
                         {m.deleted_at ? (
                           <span className="text-[#9aa7b4] italic">сообщение удалено</span>
                         ) : (
-                          m.body
+                          <MessageText body={m.body ?? ''} mine={mine} me={profile?.username} />
                         )}
                       </div>
                     )
@@ -943,7 +987,15 @@ export default function ChatView() {
 
         {sendError && <p className="mb-2 text-sm text-red-300">{sendError}</p>}
 
-        {recording ? (
+        {banned ? (
+          <div className="flex items-center gap-2 rounded-xl border border-red-500/40 bg-red-500/10 px-3 py-3 text-sm text-red-300">
+            <Icon name="ban" size={18} />
+            <span>
+              Вас заблокировал администратор — писать нельзя
+              {moderation?.ban_reason ? `. Причина: ${moderation.ban_reason}` : ''}
+            </span>
+          </div>
+        ) : recording ? (
           <div className="flex items-center gap-3 rounded-xl border border-red-500/40 bg-[#161b22] px-3 py-2.5">
             <span className="h-2.5 w-2.5 animate-pulse rounded-full bg-red-500" />
             <span className="text-sm text-[#9aa7b4]">Запись…</span>
@@ -964,7 +1016,14 @@ export default function ChatView() {
             </button>
           </div>
         ) : (
-        <form onSubmit={send} className="flex gap-2">
+        <form onSubmit={send} className="relative flex gap-2">
+          {muted && (
+            <div className="absolute bottom-full left-0 mb-2 flex items-center gap-2 rounded-lg border border-[#d29922]/40 bg-[#d29922]/10 px-3 py-1.5 text-sm text-[#e3b341]">
+              <Icon name="mute" size={15} />
+              Режим тишины ещё {untilLabel(moderation!.muted_until!)}
+              {moderation?.mute_reason ? ` · ${moderation.mute_reason}` : ''}
+            </div>
+          )}
           <input
             ref={fileInput}
             type="file"
@@ -990,12 +1049,23 @@ export default function ChatView() {
           >
             <Icon name="hourglass" size={20} />
           </button>
+          <MentionBox
+            conversationId={conv.id}
+            text={text}
+            caret={caret}
+            onPick={insertMention}
+            handle={mention}
+          />
           <textarea
+            ref={input}
             value={text}
             onChange={(e) => {
               setText(e.target.value)
+              setCaret(e.target.selectionStart ?? e.target.value.length)
               typingChannel.current?.notify()
             }}
+            onSelect={(e) => setCaret(e.currentTarget.selectionStart ?? 0)}
+            onBlur={() => mention.current?.close()}
             onPaste={(e) => {
               const f = e.clipboardData.files?.[0]
               if (f) {
@@ -1004,13 +1074,28 @@ export default function ChatView() {
               }
             }}
             onKeyDown={(e) => {
+              // пока открыт список @упоминаний, стрелки и Enter выбирают человека
+              if (mention.current?.active) {
+                if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+                  e.preventDefault()
+                  return mention.current.move(e.key === 'ArrowDown' ? 1 : -1)
+                }
+                if ((e.key === 'Enter' && !e.shiftKey) || e.key === 'Tab') {
+                  e.preventDefault()
+                  return void mention.current.accept()
+                }
+                if (e.key === 'Escape') {
+                  e.preventDefault()
+                  return mention.current.close()
+                }
+              }
               if (e.key === 'Enter' && !e.shiftKey) {
                 e.preventDefault()
                 send()
               }
             }}
             rows={1}
-            placeholder="Сообщение…  (Enter — отправить, Shift+Enter — перенос)"
+            placeholder="Сообщение…  («@» — упомянуть, Enter — отправить)"
             className="max-h-40 min-h-[44px] flex-1 resize-none rounded-xl border border-[#2a3340] bg-[#161b22] px-3.5 py-2.5 text-[15px] outline-none placeholder:text-[#64727f] focus:border-[#58a6ff]"
           />
           {!text.trim() && !file && voiceSupported() ? (

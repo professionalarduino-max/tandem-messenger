@@ -1,10 +1,12 @@
 import { Navigate, Route, Routes } from 'react-router-dom'
 import { useAuth } from './hooks/useAuth'
+import { ProfileCardProvider } from './hooks/useProfileCard'
 import Login from './pages/Login'
 import Shell from './pages/Shell'
 import ChatView from './pages/ChatView'
 import Settings from './pages/Settings'
 import Admin from './pages/Admin'
+import Invite from './pages/Invite'
 import Empty from './pages/Empty'
 
 export default function App() {
@@ -16,17 +18,28 @@ export default function App() {
     )
   }
 
-  if (!session) return <Login />
+  // приглашение смотрят и без аккаунта, остальные адреса ведут на вход
+  if (!session) {
+    return (
+      <Routes>
+        <Route path="i/:code" element={<Invite />} />
+        <Route path="*" element={<Login />} />
+      </Routes>
+    )
+  }
 
   return (
-    <Routes>
-      <Route element={<Shell />}>
-        <Route index element={<Empty />} />
-        <Route path="c/:id" element={<ChatView />} />
-        <Route path="settings" element={<Settings />} />
-        <Route path="admin" element={<Admin />} />
-      </Route>
-      <Route path="*" element={<Navigate to="/" replace />} />
-    </Routes>
+    <ProfileCardProvider>
+      <Routes>
+        <Route element={<Shell />}>
+          <Route index element={<Empty />} />
+          <Route path="c/:id" element={<ChatView />} />
+          <Route path="settings" element={<Settings />} />
+          <Route path="admin" element={<Admin />} />
+        </Route>
+        <Route path="i/:code" element={<Invite />} />
+        <Route path="*" element={<Navigate to="/" replace />} />
+      </Routes>
+    </ProfileCardProvider>
   )
 }

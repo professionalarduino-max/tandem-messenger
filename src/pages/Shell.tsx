@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Link, Outlet, useLocation, useMatch, useNavigate } from 'react-router-dom'
 import { useAuth } from '../hooks/useAuth'
+import { useProfileCard } from '../hooks/useProfileCard'
 import { Avatar, AdminBadge } from '../components/Avatar'
+import { mentionsUser } from '../components/MessageText'
 import { NewGroupModal } from '../components/NewGroupModal'
 import {
   createDirect,
@@ -22,6 +24,7 @@ type Tab = 'chats' | 'groups' | 'people'
 
 export default function Shell() {
   const { profile } = useAuth()
+  const { open: openProfile } = useProfileCard()
   const nav = useNavigate()
   const loc = useLocation()
   const openId = useMatch('/c/:id')?.params.id
@@ -37,6 +40,7 @@ export default function Shell() {
   const chatsRef = useRef<ConversationPreview[]>([])
   const openIdRef = useRef(openId)
   const myIdRef = useRef(profile?.id)
+  const myNameRef = useRef(profile?.username)
   const notified = useRef(new Set<string>())
   const pending = useRef<InboxEvent[]>([])
   const flushTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -46,6 +50,7 @@ export default function Shell() {
     queryRef.current = query
     openIdRef.current = openId
     myIdRef.current = profile?.id
+    myNameRef.current = profile?.username
   })
 
   /** Список чатов нужен всегда: из него берём счётчик непрочитанных и заголовки уведомлений. */
@@ -95,8 +100,11 @@ export default function Shell() {
             ? 'Капсула времени'
             : m.body?.trim() || m.attachment_name || 'Новое сообщение'
 
+      // упоминание — повод показать уведомление заметнее обычного
+      const mention = mentionsUser(m.body ?? null, myNameRef.current)
+
       showMessageNotification({
-        title: conv.title ?? APP_NAME,
+        title: `${conv.title ?? APP_NAME}${mention ? ' · вас упомянули' : ''}`,
         body,
         tag: m.conversation_id,
         onClick: () => nav(`/c/${m.conversation_id}`),
@@ -189,12 +197,18 @@ export default function Shell() {
         }`}
       >
         <header className="flex items-center gap-3 border-b border-[#2a3340] px-4 py-3">
-          <Avatar
-            name={profile?.display_name ?? profile?.username}
-            seed={profile?.id ?? 'me'}
-            url={profile?.avatar_url ?? null}
-            size={36}
-          />
+          <button
+            onClick={() => profile && openProfile(profile.id)}
+            title="Мой профиль"
+            className="shrink-0"
+          >
+            <Avatar
+              name={profile?.display_name ?? profile?.username}
+              seed={profile?.id ?? 'me'}
+              url={profile?.avatar_url ?? null}
+              size={36}
+            />
+          </button>
           <div className="min-w-0 flex-1">
             <div className="flex items-center gap-2 truncate font-semibold">
               {profile?.display_name ?? profile?.username}
@@ -290,6 +304,16 @@ export default function Shell() {
                   </div>
                   <div className="min-w-0 flex-1">
                     <div className="flex items-baseline gap-2">
+                      {(c.is_home || c.pinned_at) && (
+                        <Icon
+                          name="pin"
+                          size={12}
+                          title={c.is_home ? 'Главный чат' : 'Закреплён администратором'}
+                          className={`shrink-0 self-center ${
+                            c.is_home ? 'text-[#d29922]' : 'text-[#58a6ff]'
+                          }`}
+                        />
+                      )}
                       <span className="truncate font-medium">
                         {c.type === 'group' ? '# ' : ''}
                         {c.title ?? 'Без названия'}
@@ -358,21 +382,35 @@ export default function Shell() {
                   : `Все, кто пользуется ${APP_NAME} — ${plural(people.length, 'человек', 'человека', 'человек')}`}
               </Hint>
               {people.map((u) => (
-                <button
+                <div
                   key={u.id}
-                  onClick={() => openDirect(u)}
-                  className="flex w-full items-center gap-3 rounded-xl px-2 py-2.5 text-left transition hover:bg-[#161b22]"
+                  className="flex w-full items-center gap-3 rounded-xl px-2 py-2.5 transition hover:bg-[#161b22]"
                 >
-                  <div className="relative">
+                  {/* аватарка открывает профиль, остальная строка — переписку */}
+                  <button
+                    onClick={() => openProfile(u.id)}
+                    title="Открыть профиль"
+                    className="relative shrink-0"
+                  >
                     <Avatar name={u.display_name ?? u.username} seed={u.id} url={u.avatar_url} />
                     {isOnline(u.last_seen_at) && (
                       <span className="absolute right-0 bottom-0 h-3 w-3 rounded-full border-2 border-[#0e1116] bg-[#3fb950]" />
                     )}
-                  </div>
-                  <div className="min-w-0 flex-1">
+                  </button>
+                  <button
+                    onClick={() => openDirect(u)}
+                    title={u.is_me ? 'Мои настройки' : `Написать @${u.username}`}
+                    className="min-w-0 flex-1 text-left"
+                  >
                     <div className="flex items-center gap-2 truncate font-medium">
                       {u.display_name ?? u.username}
                       {u.is_super_admin && <AdminBadge />}
+                      {u.banned_at && (
+                        <Icon name="ban" size={13} title="Заблокирован" className="text-[#f85149]" />
+                      )}
+                      {u.muted_until && (
+                        <Icon name="mute" size={13} title="В режиме тишины" className="text-[#d29922]" />
+                      )}
                       {u.is_me && (
                         <span className="shrink-0 rounded border border-[#2a3340] px-1.5 py-0.5 text-[10px] text-[#64727f]">
                           вы
@@ -380,14 +418,15 @@ export default function Shell() {
                       )}
                     </div>
                     <div className="truncate text-sm text-[#9aa7b4]">
-                      @{u.username} · {lastSeenLabel(u.last_seen_at)}
+                      <span className="text-[#58a6ff]">@{u.username}</span> ·{' '}
+                      {lastSeenLabel(u.last_seen_at)}
                     </div>
-                  </div>
+                  </button>
                   <div className="flex shrink-0 items-center gap-1 text-xs text-[#64727f]">
                     <Icon name="message" size={13} />
                     {u.message_count}
                   </div>
-                </button>
+                </div>
               ))}
               {people.length === 0 && (
                 <Hint>

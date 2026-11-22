@@ -552,6 +552,172 @@ const run = async () => {
   check('график считает 14 дней', Array.isArray(stats.daily) && stats.daily.length === 14, `дней: ${stats.daily?.length}`)
   check('есть топ активных и список новичков', Array.isArray(stats.top_users) && Array.isArray(stats.newcomers))
 
+  // ===== карточка профиля =====
+  console.log('\n— Карточка профиля —')
+  const card = await rpc(friend.token, 'user_card', { uid_in: stranger.id })
+  check('карточка отдаёт профиль', card?.id === stranger.id, `username=${card?.username}`)
+  check(
+    'в карточке есть цифры и общие группы',
+    typeof card.message_count === 'number' && Array.isArray(card.common_groups),
+    `сообщений: ${card.message_count}, общих групп: ${card.common_groups?.length}`,
+  )
+  check('общая группа найдена', card.common_groups.some((g) => g.id === gid))
+  check('ссылка на личный чат подставлена', card.direct_id === null || typeof card.direct_id === 'string')
+  check('почту обычный пользователь не видит', card.email === null || card.email === undefined)
+  const cardForAdmin = await rpc(admin.token, 'user_card', { uid_in: stranger.id })
+  check('главному админу карточка показывает почту', cardForAdmin.email === 'stranger.test@example.com', `получено: ${cardForAdmin.email}`)
+  const myCard = await rpc(friend.token, 'user_card', { uid_in: friend.id })
+  check('свою карточку видно как свою', myCard.is_me === true)
+  const byName = await rpc(friend.token, 'user_card_by_name', { name_in: '@Stranger' })
+  check('карточка открывается по @юзернейму', byName?.id === stranger.id)
+  const hints = await rpc(friend.token, 'mention_candidates', { conv_in: gid, q: 'str', lim: 6 })
+  check('подсказки @упоминаний ищут человека', hints.some((u) => u.id === stranger.id), `найдено: ${hints.length}`)
+  check('и помечают участников чата', hints.every((u) => typeof u.is_member === 'boolean'))
+
+  // ===== бан и мут =====
+  console.log('\n— Бан и мут —')
+  const notAdminBan = await tryRpc(friend.token, 'admin_set_ban', { uid_in: stranger.id, banned: true })
+  check('обычный пользователь никого не банит', !notAdminBan.ok, `статус ${notAdminBan.status}`)
+
+  const selfBan = await tryRpc(admin.token, 'admin_set_ban', { uid_in: admin.id, banned: true })
+  check('админ не может забанить сам себя', !selfBan.ok, `статус ${selfBan.status}`)
+
+  const escalate = await patch(friend.token, `profiles?id=eq.${friend.id}`, { is_super_admin: true })
+  const stillPlain = await get(friend.token, `profiles?select=is_super_admin&id=eq.${friend.id}`)
+  check(
+    'сам себе права админа не выдать',
+    !escalate.ok && stillPlain[0]?.is_super_admin === false,
+    `статус ${escalate.status}`,
+  )
+
+  await rpc(admin.token, 'admin_set_mute', { uid_in: stranger.id, minutes: 60, reason_in: 'тест' })
+  const mutedState = await get(admin.token, `user_moderation?select=muted_until,mute_reason&user_id=eq.${stranger.id}`)
+  check('мут записан в базу', Boolean(mutedState[0]?.muted_until), `причина: ${mutedState[0]?.mute_reason}`)
+  const mutedWrite = await post(stranger.token, 'messages', { conversation_id: gid, sender_id: stranger.id, body: 'я в муте' })
+  check('в муте сообщение не отправить', !mutedWrite.ok, `статус ${mutedWrite.status}`)
+  const mutedReaction = await tryRpc(stranger.token, 'toggle_reaction', { msg_in: msgId, emoji_in: '🤐' })
+  check('и реакцию тоже не поставить', !mutedReaction.ok, `статус ${mutedReaction.status}`)
+  const mutedRead = await get(stranger.token, `messages?select=id&conversation_id=eq.${gid}&limit=1`)
+  check('но читать чаты по-прежнему можно', mutedRead.length > 0)
+
+  await rpc(admin.token, 'admin_set_mute', { uid_in: stranger.id, minutes: 0 })
+  const afterUnmute = await post(stranger.token, 'messages', { conversation_id: gid, sender_id: stranger.id, body: 'мут снят' })
+  check('после снятия мута сообщения уходят', afterUnmute.ok, `статус ${afterUnmute.status}`)
+
+  await rpc(admin.token, 'admin_set_ban', { uid_in: stranger.id, banned: true, reason_in: 'тестовый бан' })
+  const bannedWrite = await post(stranger.token, 'messages', { conversation_id: gid, sender_id: stranger.id, body: 'я в бане' })
+  check('забаненный не пишет', !bannedWrite.ok, `статус ${bannedWrite.status}`)
+  const bannedVisible = await rpc(friend.token, 'list_users', { q: 'stranger' })
+  check('в каталоге видна отметка о бане', Boolean(bannedVisible.find((u) => u.id === stranger.id)?.banned_at))
+  await rpc(admin.token, 'admin_set_ban', { uid_in: stranger.id, banned: false })
+  const unbannedWrite = await post(stranger.token, 'messages', { conversation_id: gid, sender_id: stranger.id, body: 'бан снят' })
+  check('после разбана всё работает', unbannedWrite.ok, `статус ${unbannedWrite.status}`)
+
+  const purged = await rpc(admin.token, 'admin_purge_user_messages', { uid_in: stranger.id })
+  const leftFromStranger = await get(admin.token, `messages?select=id&sender_id=eq.${stranger.id}&deleted_at=is.null`)
+  check('админ стирает все сообщения человека', leftFromStranger.length === 0, `удалено: ${purged}`)
+
+  const modList = await rpc(admin.token, 'admin_moderation')
+  check('сводка модерации собирается', Array.isArray(modList?.banned) && Array.isArray(modList?.pinned))
+  const modDenied = await tryRpc(friend.token, 'admin_moderation')
+  check('чужим сводка модерации не отдаётся', !modDenied.ok || modDenied.data === null, `статус ${modDenied.status}`)
+
+  // ===== приглашения =====
+  console.log('\n— Пригласительные ссылки —')
+  const inviteRow = await rpc(friend.token, 'create_invite', { conv_in: gid, ttl_hours: 24, max_uses_in: 0 })
+  check('админ группы создаёт ссылку', Boolean(inviteRow?.code), `код: ${inviteRow?.code}`)
+  check('код короткий и без похожих букв', /^[a-hj-km-np-z2-9]{8}$/.test(inviteRow.code), inviteRow.code)
+
+  const strangerInvite = await tryRpc(nosy.token, 'create_invite', { conv_in: gid })
+  check('посторонний ссылку не создаст', !strangerInvite.ok, `статус ${strangerInvite.status}`)
+
+  const anonInfo = await fetch(`${URL}/rest/v1/rpc/invite_info`, {
+    method: 'POST',
+    headers: { apikey: ANON, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ code_in: inviteRow.code }),
+  })
+  const anonInfoBody = await anonInfo.json().catch(() => null)
+  check('до входа видно, куда зовут', anonInfo.ok && anonInfoBody?.state === 'ok', `название: ${anonInfoBody?.title}`)
+
+  const joined = await rpc(nosy.token, 'redeem_invite', { code_in: inviteRow.code })
+  const nosyIsMember = await get(admin.token, `conversation_members?select=user_id&conversation_id=eq.${gid}&user_id=eq.${nosy.id}`)
+  check('по ссылке человек попадает в группу', joined === gid && nosyIsMember.length === 1)
+  const usedInvite = await rpc(friend.token, 'list_invites', { conv_in: gid })
+  check('счётчик переходов растёт', usedInvite.find((i) => i.code === inviteRow.code)?.uses === 1)
+
+  await rpc(friend.token, 'revoke_invite', { code_in: inviteRow.code })
+  const revokedState = await rpc(nosy.token, 'invite_info', { code_in: inviteRow.code })
+  check('отозванная ссылка помечена', revokedState.state === 'revoked')
+  await fetch(`${URL}/rest/v1/conversation_members?conversation_id=eq.${gid}&user_id=eq.${nosy.id}`, {
+    method: 'DELETE',
+    headers: SERVICE_H,
+  })
+  const revokedJoin = await tryRpc(nosy.token, 'redeem_invite', { code_in: inviteRow.code })
+  check('по отозванной ссылке не войти', !revokedJoin.ok, `статус ${revokedJoin.status}`)
+
+  const limited = await rpc(friend.token, 'create_invite', { conv_in: gid, ttl_hours: 1, max_uses_in: 1 })
+  await rpc(nosy.token, 'redeem_invite', { code_in: limited.code })
+  const usedUp = await rpc(friend.token, 'invite_info', { code_in: limited.code })
+  check('ссылка на одного исчерпывается', usedUp.state === 'used_up', `состояние: ${usedUp.state}`)
+  await rpc(friend.token, 'revoke_invite', { code_in: limited.code })
+
+  const bannedForInvite = await rpc(admin.token, 'create_invite', { conv_in: gid, ttl_hours: 1, max_uses_in: 0 })
+  await rpc(admin.token, 'admin_set_ban', { uid_in: stranger.id, banned: true, reason_in: 'проверка ссылки' })
+  const bannedJoin = await tryRpc(stranger.token, 'redeem_invite', { code_in: bannedForInvite.code })
+  check('забаненного ссылка в группу не пустит', !bannedJoin.ok, `статус ${bannedJoin.status}`)
+  await rpc(admin.token, 'admin_set_ban', { uid_in: stranger.id, banned: false })
+  await rpc(admin.token, 'revoke_invite', { code_in: bannedForInvite.code })
+
+  // ===== главный чат и закрепления =====
+  console.log('\n— Главный чат и закрепления —')
+  const homeRows = await get(admin.token, 'conversations?select=id,title,is_home,pinned_at&is_home=is.true')
+  check('главный чат в базе один', homeRows.length === 1, `это «${homeRows[0]?.title}»`)
+  const homeId = homeRows[0]?.id
+  check('главный чат закреплён', Boolean(homeRows[0]?.pinned_at))
+
+  const newbieEmail = `newbie.${Date.now()}@example.com`
+  await ensureUser(newbieEmail, 'NewbiePass123', 'Newbie')
+  const newbie = await signIn(newbieEmail, 'NewbiePass123')
+  const newbieChats = await rpc(newbie.token, 'list_conversations')
+  check('новичок сразу состоит в главном чате', newbieChats.some((c) => c.id === homeId), `чатов: ${newbieChats.length}`)
+  check('и главный чат стоит первым', newbieChats[0]?.id === homeId)
+  const leaveHome = await tryRpc(newbie.token, 'leave_group', { conv_in: homeId })
+  check('главный чат нельзя покинуть', !leaveHome.ok, `статус ${leaveHome.status}`)
+
+  const pinDenied = await tryRpc(friend.token, 'admin_pin_conversation', { conv_in: gid, pinned: true })
+  check('закреплять у всех может только главный админ', !pinDenied.ok, `статус ${pinDenied.status}`)
+
+  await rpc(admin.token, 'admin_pin_conversation', { conv_in: gid, pinned: true })
+  const pinnedForNewbie = await rpc(newbie.token, 'list_conversations')
+  const pinnedChat = pinnedForNewbie.find((c) => c.id === gid)
+  check('закреплённая группа появилась у всех', Boolean(pinnedChat), `чатов у новичка: ${pinnedForNewbie.length}`)
+  check('…и помечена закреплением', Boolean(pinnedChat?.pinned_at))
+  check('порядок: главный чат, потом закреплённые', pinnedForNewbie[0]?.id === homeId && pinnedForNewbie[1]?.id === gid)
+
+  await rpc(admin.token, 'admin_pin_conversation', { conv_in: gid, pinned: false })
+  const afterGlobalUnpin = await rpc(admin.token, 'list_conversations')
+  check('закрепление снимается', !afterGlobalUnpin.find((c) => c.id === gid)?.pinned_at)
+
+  const unpinHome = await tryRpc(admin.token, 'admin_pin_conversation', { conv_in: homeId, pinned: false })
+  check('главный чат открепить нельзя', !unpinHome.ok, `статус ${unpinHome.status}`)
+
+  // ===== анонимный ключ не должен открывать каталог =====
+  console.log('\n— Анонимный доступ —')
+  for (const [fn, args] of [
+    ['user_card', { uid_in: admin.id }],
+    ['user_card_by_name', { name_in: 'ABDev' }],
+    ['list_users', { q: '' }],
+    ['mention_candidates', { conv_in: gid, q: '' }],
+    ['admin_stats', {}],
+  ]) {
+    const r = await fetch(`${URL}/rest/v1/rpc/${fn}`, {
+      method: 'POST',
+      headers: { apikey: ANON, 'Content-Type': 'application/json' },
+      body: JSON.stringify(args),
+    })
+    check(`без входа ${fn} закрыт`, !r.ok, `статус ${r.status}`)
+  }
+
   // ===== уборка: база остаётся чистой, тестовые группы не висят в каталоге =====
   console.log('\n— Уборка —')
   const SH = { apikey: SERVICE, Authorization: `Bearer ${SERVICE}`, 'Content-Type': 'application/json' }
@@ -568,7 +734,7 @@ const run = async () => {
   }
 
   await fetch(`${URL}/rest/v1/conversations?id=in.(${gid},${dm})`, { method: 'DELETE', headers: SH })
-  for (const u of [friend, stranger, nosy]) {
+  for (const u of [friend, stranger, nosy, newbie]) {
     await fetch(`${URL}/auth/v1/admin/users/${u.id}`, { method: 'DELETE', headers: SH })
   }
 

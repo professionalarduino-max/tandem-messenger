@@ -1,7 +1,9 @@
 import { useEffect, useState } from 'react'
+import { useProfileCard } from '../hooks/useProfileCard'
 import { Avatar, AdminBadge } from './Avatar'
 import { AvatarPicker } from './AvatarPicker'
 import { Icon } from './Icon'
+import { InvitePanel } from './InvitePanel'
 import {
   addMember,
   deleteConversation,
@@ -35,7 +37,8 @@ export function GroupSettingsModal({
   onChanged: () => Promise<void> | void
   onDeleted: () => void
 }) {
-  const [tab, setTab] = useState<'info' | 'members'>('info')
+  const { open: openProfile } = useProfileCard()
+  const [tab, setTab] = useState<'info' | 'members' | 'links'>('info')
   const [title, setTitle] = useState(conversation.title ?? '')
   const [description, setDescription] = useState(conversation.description ?? '')
   const [avatarUrl, setAvatarUrl] = useState(conversation.avatar_url)
@@ -96,6 +99,7 @@ export function GroupSettingsModal({
             [
               ['info', 'О группе'],
               ['members', `Участники · ${list.length}`],
+              ['links', 'Ссылки'],
             ] as const
           ).map(([k, label]) => (
             <button
@@ -234,13 +238,19 @@ export function GroupSettingsModal({
 
               {list.map((m) => (
                 <div key={m.user_id} className="flex items-center gap-3 rounded-lg px-1 py-2">
-                  <Avatar
-                    name={m.profile.display_name ?? m.profile.username}
-                    seed={m.user_id}
-                    url={m.profile.avatar_url}
-                    size={36}
-                  />
-                  <div className="min-w-0 flex-1">
+                  <button
+                    onClick={() => openProfile(m.user_id)}
+                    title={`Профиль @${m.profile.username}`}
+                    className="shrink-0"
+                  >
+                    <Avatar
+                      name={m.profile.display_name ?? m.profile.username}
+                      seed={m.user_id}
+                      url={m.profile.avatar_url}
+                      size={36}
+                    />
+                  </button>
+                  <button onClick={() => openProfile(m.user_id)} className="min-w-0 flex-1 text-left">
                     <div className="flex items-center gap-2 truncate text-sm">
                       {m.profile.display_name ?? m.profile.username}
                       {m.profile.is_super_admin && <AdminBadge />}
@@ -249,9 +259,10 @@ export function GroupSettingsModal({
                       )}
                     </div>
                     <div className="truncate text-xs text-[#64727f]">
-                      @{m.profile.username} · {lastSeenLabel(m.profile.last_seen_at)}
+                      <span className="text-[#58a6ff]">@{m.profile.username}</span> ·{' '}
+                      {lastSeenLabel(m.profile.last_seen_at)}
                     </div>
-                  </div>
+                  </button>
 
                   {isAdmin && m.user_id !== myId && !m.profile.is_super_admin && (
                     <div className="flex shrink-0 gap-1">
@@ -279,6 +290,8 @@ export function GroupSettingsModal({
               ))}
             </>
           )}
+
+          {tab === 'links' && <InvitePanel conversationId={conversation.id} canManage={isAdmin} />}
         </div>
       </div>
     </div>

@@ -83,7 +83,7 @@ export default function Settings() {
     try {
       await updateProfile(profile.id, {
         display_name: displayName.trim(),
-        username: username.trim(),
+        username: username.trim().replace(/^@+/, ''),
         bio: bio.trim() || null,
       })
       await refreshProfile()
@@ -130,6 +130,7 @@ export default function Settings() {
               {profile?.display_name ?? profile?.username}
               {profile?.is_super_admin && <AdminBadge />}
             </div>
+            <div className="truncate text-sm text-[#58a6ff]">@{profile?.username}</div>
             <div className="truncate text-sm text-[#9aa7b4]">{session?.user.email}</div>
           </div>
         </div>
@@ -149,7 +150,17 @@ export default function Settings() {
           </label>
           <label className="mb-3 block">
             <span className="mb-1.5 block text-sm text-[#9aa7b4]">Юзернейм</span>
-            <input className={input} value={username} onChange={(e) => setUsername(e.target.value)} />
+            <span className="relative block">
+              {/* собачка всегда на месте: её не нужно печатать и нельзя стереть */}
+              <span className="pointer-events-none absolute top-1/2 left-3 -translate-y-1/2 text-[#58a6ff]">
+                @
+              </span>
+              <input
+                className={`${input} pl-7`}
+                value={username}
+                onChange={(e) => setUsername(e.target.value.replace(/^@+/, ''))}
+              />
+            </span>
           </label>
           <label className="mb-4 block">
             <span className="mb-1.5 flex items-center justify-between text-sm text-[#9aa7b4]">

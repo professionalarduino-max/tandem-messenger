@@ -3,11 +3,14 @@ import type { ReactNode } from 'react'
 import type { Session } from '@supabase/supabase-js'
 import { supabase } from '../lib/supabase'
 import { getMyProfile, touchLastSeen } from '../lib/api/profiles'
-import type { Profile } from '../types/db'
+import { getMyModeration } from '../lib/api/moderation'
+import type { Moderation, Profile } from '../types/db'
 
 interface AuthState {
   session: Session | null
   profile: Profile | null
+  /** мой бан или мут: пока он есть, интерфейс не даёт писать */
+  moderation: Moderation | null
   loading: boolean
   refreshProfile: () => Promise<void>
 }
@@ -15,6 +18,7 @@ interface AuthState {
 const Ctx = createContext<AuthState>({
   session: null,
   profile: null,
+  moderation: null,
   loading: true,
   refreshProfile: async () => {},
 })
@@ -22,11 +26,15 @@ const Ctx = createContext<AuthState>({
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [session, setSession] = useState<Session | null>(null)
   const [profile, setProfile] = useState<Profile | null>(null)
+  const [moderation, setModeration] = useState<Moderation | null>(null)
   const [loading, setLoading] = useState(true)
   const timer = useRef<number | null>(null)
   const currentUser = useRef<string | null>(null)
 
   async function loadProfile(userId: string) {
+    getMyModeration(userId)
+      .then(setModeration)
+      .catch(() => setModeration(null))
     // профиль создаётся триггером, изредка он чуть отстаёт от сессии
     for (let i = 0; i < 5; i++) {
       const p = await getMyProfile(userId)
@@ -50,6 +58,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       if (!s) {
         currentUser.current = null
         setProfile(null)
+        setModeration(null)
         return
       }
       // профиль перечитываем только при смене пользователя: обновление токена раз в час
@@ -62,11 +71,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return () => sub.subscription.unsubscribe()
   }, [])
 
-  // отметка «в сети» раз в минуту
+  // отметка «в сети» раз в минуту; заодно перечитываем бан — его могли выдать, пока мы сидим в чате
   useEffect(() => {
     if (!session) return
-    touchLastSeen()
-    timer.current = window.setInterval(touchLastSeen, 60_000)
+    const uid = session.user.id
+    const tick = () => {
+      touchLastSeen()
+      getMyModeration(uid)
+        .then(setModeration)
+        .catch(() => {})
+    }
+    tick()
+    timer.current = window.setInterval(tick, 60_000)
     return () => {
       if (timer.current) window.clearInterval(timer.current)
     }
@@ -76,12 +92,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     () => ({
       session,
       profile,
+      moderation,
       loading,
       refreshProfile: async () => {
         if (session) await loadProfile(session.user.id)
       },
     }),
-    [session, profile, loading],
+    [session, profile, moderation, loading],
   )
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>

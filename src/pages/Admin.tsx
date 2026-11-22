@@ -1,26 +1,37 @@
 import { useCallback, useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useAuth } from '../hooks/useAuth'
+import { useProfileCard } from '../hooks/useProfileCard'
 import { Avatar, AdminBadge } from '../components/Avatar'
 import { Icon, type IconName } from '../components/Icon'
 import { getAdminStats } from '../lib/api/profiles'
+import {
+  getAdminModeration,
+  pinConversationForAll,
+  setBan,
+  setMute,
+} from '../lib/api/moderation'
 import { humanSize } from '../lib/image'
-import { fullDateTime, lastSeenLabel, plural, pluralWord, timeShort } from '../lib/format'
+import { fullDateTime, lastSeenLabel, plural, pluralWord, timeShort, untilLabel } from '../lib/format'
 import { APP_NAME } from '../config'
-import type { AdminStats } from '../types/db'
+import type { AdminModeration, AdminStats } from '../types/db'
 
 /** Панель главного админа: кто пользуется мессенджером и что в нём происходит. */
 export default function Admin() {
   const { profile } = useAuth()
+  const { open: openProfile } = useProfileCard()
   const nav = useNavigate()
   const [stats, setStats] = useState<AdminStats | null>(null)
+  const [mod, setMod] = useState<AdminModeration | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
 
   const load = useCallback(async () => {
     setBusy(true)
     try {
-      setStats(await getAdminStats())
+      const [s, m] = await Promise.all([getAdminStats(), getAdminModeration()])
+      setStats(s)
+      setMod(m)
       setError(null)
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
@@ -125,6 +136,97 @@ export default function Admin() {
             <DailyChart data={stats.daily} />
           </Panel>
 
+          {/* ===== Модерация ===== */}
+          <Panel title="Модерация и закрепления" icon="shield">
+            {!mod ? (
+              <Empty>Загружаем…</Empty>
+            ) : (
+              <>
+                <div className="mb-3 flex flex-wrap gap-5">
+                  <Big value={mod.banned.length} label="заблокированы" tone="#f85149" />
+                  <Big value={mod.muted.length} label="в режиме тишины" tone="#d29922" />
+                  <Big value={mod.pinned.length} label="закреплено у всех" tone="#58a6ff" />
+                  <Big value={mod.invites} label="живых приглашений" tone="#bc8cff" />
+                </div>
+
+                {mod.banned.map((u) => (
+                  <ModRow
+                    key={u.id}
+                    id={u.id}
+                    name={u.display_name ?? u.username}
+                    username={u.username}
+                    avatar={u.avatar_url}
+                    note={`заблокирован ${fullDateTime(u.since)}${u.reason ? ` · ${u.reason}` : ''}`}
+                    action="разблокировать"
+                    onOpen={() => openProfile(u.id)}
+                    onAction={async () => {
+                      await setBan(u.id, false)
+                      await load()
+                    }}
+                  />
+                ))}
+
+                {mod.muted.map((u) => (
+                  <ModRow
+                    key={u.id}
+                    id={u.id}
+                    name={u.display_name ?? u.username}
+                    username={u.username}
+                    avatar={u.avatar_url}
+                    note={`молчит ещё ${untilLabel(u.until)}${u.reason ? ` · ${u.reason}` : ''}`}
+                    action="снять мут"
+                    onOpen={() => openProfile(u.id)}
+                    onAction={async () => {
+                      await setMute(u.id, 0)
+                      await load()
+                    }}
+                  />
+                ))}
+
+                {mod.pinned.map((c) => (
+                  <div
+                    key={c.id}
+                    className="flex items-center gap-3 border-t border-[#1c2430] py-2.5"
+                  >
+                    <Avatar name={c.title} seed={c.id} url={c.avatar_url} size={32} square />
+                    <button onClick={() => nav(`/c/${c.id}`)} className="min-w-0 flex-1 text-left">
+                      <div className="flex items-center gap-1.5 truncate text-sm font-medium">
+                        <Icon
+                          name="pin"
+                          size={12}
+                          className={c.is_home ? 'text-[#d29922]' : 'text-[#58a6ff]'}
+                        />
+                        {c.title ?? 'Без названия'}
+                      </div>
+                      <div className="truncate text-xs text-[#64727f]">
+                        {c.is_home ? 'главный чат · ' : ''}
+                        {plural(c.members, 'участник', 'участника', 'участников')}
+                      </div>
+                    </button>
+                    {!c.is_home && (
+                      <button
+                        onClick={async () => {
+                          await pinConversationForAll(c.id, false)
+                          await load()
+                        }}
+                        className="shrink-0 rounded-md border border-[#2a3340] px-2 py-1 text-xs text-[#9aa7b4] hover:text-white"
+                      >
+                        открепить
+                      </button>
+                    )}
+                  </div>
+                ))}
+
+                {mod.banned.length === 0 && mod.muted.length === 0 && (
+                  <p className="border-t border-[#1c2430] pt-2.5 text-sm text-[#64727f]">
+                    Никто не наказан. Бан и мут выдаются из карточки человека — нажмите на его
+                    аватарку.
+                  </p>
+                )}
+              </>
+            )}
+          </Panel>
+
           <div className="grid gap-5 md:grid-cols-2">
             {/* ===== Люди ===== */}
             <Panel title="Люди" icon="users">
@@ -170,16 +272,19 @@ export default function Admin() {
             {stats.top_users.map((u, i) => (
               <div key={u.id} className="flex items-center gap-3 border-t border-[#1c2430] py-2.5 first:border-0">
                 <span className="w-4 shrink-0 text-center text-xs text-[#64727f]">{i + 1}</span>
-                <Avatar name={u.display_name ?? u.username} seed={u.id} url={u.avatar_url} size={32} />
-                <div className="min-w-0 flex-1">
+                <button onClick={() => openProfile(u.id)} title="Открыть профиль" className="shrink-0">
+                  <Avatar name={u.display_name ?? u.username} seed={u.id} url={u.avatar_url} size={32} />
+                </button>
+                <button onClick={() => openProfile(u.id)} className="min-w-0 flex-1 text-left">
                   <div className="flex items-center gap-2 truncate text-sm font-medium">
                     {u.display_name ?? u.username}
                     {u.is_super_admin && <AdminBadge />}
                   </div>
                   <div className="truncate text-xs text-[#64727f]">
-                    @{u.username} · {lastSeenLabel(u.last_seen_at)}
+                    <span className="text-[#58a6ff]">@{u.username}</span> ·{' '}
+                    {lastSeenLabel(u.last_seen_at)}
                   </div>
-                </div>
+                </button>
                 <Bar value={u.messages} max={stats.top_users[0]?.messages || 1} />
                 <span className="w-12 shrink-0 text-right text-sm tabular-nums">{u.messages}</span>
               </div>
@@ -213,11 +318,13 @@ export default function Admin() {
             {stats.newcomers.length === 0 && <Empty>За последнее время никто не регистрировался.</Empty>}
             {stats.newcomers.map((u) => (
               <div key={u.id} className="flex items-center gap-3 border-t border-[#1c2430] py-2.5 first:border-0">
-                <Avatar name={u.display_name ?? u.username} seed={u.id} url={u.avatar_url} size={32} />
-                <div className="min-w-0 flex-1">
+                <button onClick={() => openProfile(u.id)} title="Открыть профиль" className="shrink-0">
+                  <Avatar name={u.display_name ?? u.username} seed={u.id} url={u.avatar_url} size={32} />
+                </button>
+                <button onClick={() => openProfile(u.id)} className="min-w-0 flex-1 text-left">
                   <div className="truncate text-sm font-medium">{u.display_name ?? u.username}</div>
-                  <div className="truncate text-xs text-[#64727f]">@{u.username}</div>
-                </div>
+                  <div className="truncate text-xs text-[#58a6ff]">@{u.username}</div>
+                </button>
                 <span className="shrink-0 text-xs text-[#64727f]">{fullDateTime(u.created_at)}</span>
               </div>
             ))}
@@ -310,6 +417,47 @@ function Bar({ value, max }: { value: number; max: number }) {
 
 function Empty({ children }: { children: React.ReactNode }) {
   return <p className="py-2 text-sm text-[#64727f]">{children}</p>
+}
+
+/** Строка наказанного человека: карточка по клику и одна кнопка, чтобы отменить. */
+function ModRow({
+  id,
+  name,
+  username,
+  avatar,
+  note,
+  action,
+  onOpen,
+  onAction,
+}: {
+  id: string
+  name: string
+  username: string
+  avatar: string | null
+  note: string
+  action: string
+  onOpen: () => void
+  onAction: () => Promise<void>
+}) {
+  return (
+    <div className="flex items-center gap-3 border-t border-[#1c2430] py-2.5">
+      <button onClick={onOpen} title="Открыть профиль" className="shrink-0">
+        <Avatar name={name} seed={id} url={avatar} size={32} />
+      </button>
+      <button onClick={onOpen} className="min-w-0 flex-1 text-left">
+        <div className="truncate text-sm font-medium">{name}</div>
+        <div className="truncate text-xs text-[#64727f]">
+          <span className="text-[#58a6ff]">@{username}</span> · {note}
+        </div>
+      </button>
+      <button
+        onClick={() => void onAction()}
+        className="shrink-0 rounded-md border border-[#2a3340] px-2 py-1 text-xs text-[#9aa7b4] hover:text-white"
+      >
+        {action}
+      </button>
+    </div>
+  )
 }
 
 /** Столбики активности за 14 дней — рисуем сами, без библиотек. */

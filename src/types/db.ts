@@ -33,6 +33,106 @@ export interface DirectoryUser {
   is_me: boolean
   message_count: number
   group_count: number
+  banned_at: string | null
+  /** срок мута; база отдаёт его, только пока он не истёк */
+  muted_until: string | null
+}
+
+/** Состояние модерации: бан бессрочный, мут — до срока. */
+export interface Moderation {
+  banned_at: string | null
+  ban_reason: string | null
+  muted_until: string | null
+  mute_reason: string | null
+}
+
+/** Карточка профиля — то, что открывается по клику на аватарку. */
+export interface UserCard {
+  id: string
+  username: string
+  display_name: string | null
+  avatar_url: string | null
+  bio: string | null
+  is_super_admin: boolean
+  last_seen_at: string
+  created_at: string
+  is_me: boolean
+  message_count: number
+  reactions_got: number
+  group_count: number
+  common_groups: { id: string; title: string | null; avatar_url: string | null }[]
+  /** личный чат с этим человеком, если он уже заведён */
+  direct_id: string | null
+  moderation: Moderation
+  /** почту база показывает только главному админу */
+  email: string | null
+}
+
+export interface MentionCandidate {
+  id: string
+  username: string
+  display_name: string | null
+  avatar_url: string | null
+  is_member: boolean
+}
+
+export type InviteState = 'ok' | 'revoked' | 'expired' | 'used_up'
+
+export interface Invite {
+  code: string
+  created_at: string
+  expires_at: string | null
+  max_uses: number | null
+  uses: number
+  revoked_at: string | null
+  state: InviteState
+  author: string | null
+}
+
+/** Что видит человек, открывший пригласительную ссылку. */
+export interface InviteInfo {
+  state: InviteState | 'not_found'
+  code?: string
+  conversation_id?: string
+  title?: string | null
+  description?: string | null
+  avatar_url?: string | null
+  members?: number
+  messages?: number
+  expires_at?: string | null
+  uses?: number
+  max_uses?: number | null
+  i_am_member?: boolean
+  author?: { username: string; display_name: string | null; avatar_url: string | null }
+}
+
+/** Сводка модерации для админ-панели. */
+export interface AdminModeration {
+  banned: {
+    id: string
+    username: string
+    display_name: string | null
+    avatar_url: string | null
+    since: string
+    reason: string | null
+  }[]
+  muted: {
+    id: string
+    username: string
+    display_name: string | null
+    avatar_url: string | null
+    until: string
+    reason: string | null
+  }[]
+  pinned: {
+    id: string
+    title: string | null
+    avatar_url: string | null
+    type: ConversationType
+    is_home: boolean
+    members: number
+  }[]
+  invites: number
 }
 
 /** Сводка админ-панели — то, что отдаёт admin_stats(). */
@@ -162,6 +262,10 @@ export interface ConversationPreview {
   my_role: 'member' | 'admin'
   peer_id: string | null
   peer_last_seen: string | null
+  /** закреплён главным админом для всех */
+  pinned_at: string | null
+  /** главный чат мессенджера: всегда первый и его нельзя покинуть */
+  is_home: boolean
 }
 
 export interface PublicGroup {
@@ -196,4 +300,7 @@ export interface Conversation {
   created_by: string | null
   created_at: string
   last_message_at: string
+  pinned_at: string | null
+  pinned_by: string | null
+  is_home: boolean
 }
