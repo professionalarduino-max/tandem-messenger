@@ -22,15 +22,19 @@ async function ensureUser(email, password, username) {
   if (!r.ok && r.status !== 422) throw new Error(`create ${email}: ${await r.text()}`)
 }
 
-async function signIn(email, password) {
+async function trySignIn(email, password) {
   const r = await fetch(`${URL}/auth/v1/token?grant_type=password`, {
     method: 'POST',
     headers: { apikey: ANON, 'Content-Type': 'application/json' },
     body: JSON.stringify({ email, password }),
   })
-  const j = await r.json()
-  if (!j.access_token) throw new Error(`signin ${email}: ${JSON.stringify(j)}`)
-  return { token: j.access_token, id: j.user.id }
+  return { status: r.status, body: await r.json() }
+}
+
+async function signIn(email, password) {
+  const { body } = await trySignIn(email, password)
+  if (!body.access_token) throw new Error(`signin ${email}: ${JSON.stringify(body)}`)
+  return { token: body.access_token, id: body.user.id }
 }
 
 const H = (t) => ({ apikey: ANON, Authorization: `Bearer ${t}`, 'Content-Type': 'application/json' })
@@ -609,7 +613,11 @@ const run = async () => {
   check('забаненный не пишет', !bannedWrite.ok, `статус ${bannedWrite.status}`)
   const bannedVisible = await rpc(friend.token, 'list_users', { q: 'stranger' })
   check('в каталоге видна отметка о бане', Boolean(bannedVisible.find((u) => u.id === stranger.id)?.banned_at))
+  const bannedLogin = await trySignIn('stranger.test@example.com', 'StrangerPass123')
+  check('и войти заново тоже не выйдет', !bannedLogin.body.access_token, `статус ${bannedLogin.status}`)
   await rpc(admin.token, 'admin_set_ban', { uid_in: stranger.id, banned: false })
+  const freeLogin = await trySignIn('stranger.test@example.com', 'StrangerPass123')
+  check('после разбана вход открывается снова', Boolean(freeLogin.body.access_token), `статус ${freeLogin.status}`)
   const unbannedWrite = await post(stranger.token, 'messages', { conversation_id: gid, sender_id: stranger.id, body: 'бан снят' })
   check('после разбана всё работает', unbannedWrite.ok, `статус ${unbannedWrite.status}`)
 
