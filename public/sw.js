@@ -1,14 +1,20 @@
 /* Service worker Tandem: оболочка из кеша, данные — всегда из сети. */
 
-const VERSION = 'tandem-v4'
+const VERSION = 'tandem-v5'
 const SHELL = `${VERSION}-shell`
+
+// Приложение может лежать не в корне домена (GitHub Pages — /tandem-messenger/),
+// поэтому все пути считаем от области видимости самого service worker.
+const BASE = new URL('./', self.registration.scope).pathname
+const path = (file) => BASE + file
+
 const SHELL_FILES = [
-  '/',
-  '/offline.html',
-  '/manifest.webmanifest',
-  '/icon-192.png',
-  '/icon-512.png',
-  '/apple-touch-icon.png',
+  BASE,
+  path('offline.html'),
+  path('manifest.webmanifest'),
+  path('icon-192.png'),
+  path('icon-512.png'),
+  path('apple-touch-icon.png'),
 ]
 
 self.addEventListener('install', (event) => {
@@ -38,14 +44,16 @@ async function handleNavigation(request) {
   try {
     const fresh = await fetch(request)
     const cache = await caches.open(SHELL)
-    cache.put('/', fresh.clone())
+    cache.put(BASE, fresh.clone())
     return fresh
   } catch {
-    return (await caches.match('/')) || (await caches.match('/offline.html')) || Response.error()
+    return (
+      (await caches.match(BASE)) || (await caches.match(path('offline.html'))) || Response.error()
+    )
   }
 }
 
-/** Статика сборки (/assets/...) неизменяема — кеш, потом сеть. */
+/** Статика сборки (assets/...) неизменяема — кеш, потом сеть. */
 async function handleAsset(request) {
   const cached = await caches.match(request)
   if (cached) return cached
@@ -70,7 +78,7 @@ self.addEventListener('fetch', (event) => {
     return
   }
 
-  if (url.pathname.startsWith('/assets/') || SHELL_FILES.includes(url.pathname)) {
+  if (url.pathname.startsWith(path('assets/')) || SHELL_FILES.includes(url.pathname)) {
     event.respondWith(handleAsset(request))
   }
 })
@@ -78,7 +86,7 @@ self.addEventListener('fetch', (event) => {
 /** Клик по уведомлению — открыть уже запущенное окно, иначе новое. */
 self.addEventListener('notificationclick', (event) => {
   event.notification.close()
-  const target = event.notification.data?.url || '/'
+  const target = new URL(event.notification.data?.url || '.', self.registration.scope).href
   event.waitUntil(
     self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then((list) => {
       for (const client of list) {

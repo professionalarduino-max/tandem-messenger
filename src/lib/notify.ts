@@ -36,11 +36,13 @@ export function showMessageNotification(opts: {
 }) {
   if (!notificationsEnabled()) return
   try {
+    // BASE_URL: на GitHub Pages сайт лежит в подпапке, абсолютный путь туда не ведёт
+    const icon = `${import.meta.env.BASE_URL}icon-192.png`
     const n = new Notification(opts.title, {
       body: opts.body,
       tag: opts.tag,
-      icon: '/icon-192.png',
-      badge: '/icon-192.png',
+      icon,
+      badge: icon,
     })
     n.onclick = () => {
       window.focus()
