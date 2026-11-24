@@ -6,16 +6,24 @@ import { Avatar, AdminBadge } from '../components/Avatar'
 import { Icon, type IconName } from '../components/Icon'
 import { getAdminStats } from '../lib/api/profiles'
 import {
+  addBadWord,
+  banIp,
   getAdminModeration,
+  getIpBans,
+  getProfanity,
   pinConversationForAll,
+  removeBadWord,
+  resetStrikes,
   setBan,
   setMute,
+  strikeHint,
+  unbanIp,
 } from '../lib/api/moderation'
 import { chatWords, isChannel } from '../lib/chat'
 import { humanSize } from '../lib/image'
 import { fullDateTime, lastSeenLabel, plural, pluralWord, timeShort, untilLabel } from '../lib/format'
 import { APP_NAME } from '../config'
-import type { AdminModeration, AdminStats } from '../types/db'
+import type { AdminModeration, AdminStats, IpBan, Profanity } from '../types/db'
 
 /** Панель главного админа: кто пользуется мессенджером и что в нём происходит. */
 export default function Admin() {
@@ -24,15 +32,24 @@ export default function Admin() {
   const nav = useNavigate()
   const [stats, setStats] = useState<AdminStats | null>(null)
   const [mod, setMod] = useState<AdminModeration | null>(null)
+  const [bans, setBans] = useState<IpBan[]>([])
+  const [prof, setProf] = useState<Profanity | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
 
   const load = useCallback(async () => {
     setBusy(true)
     try {
-      const [s, m] = await Promise.all([getAdminStats(), getAdminModeration()])
+      const [s, m, b, p] = await Promise.all([
+        getAdminStats(),
+        getAdminModeration(),
+        getIpBans(),
+        getProfanity(),
+      ])
       setStats(s)
       setMod(m)
+      setBans(b)
+      setProf(p)
       setError(null)
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
@@ -226,6 +243,16 @@ export default function Admin() {
                 )}
               </>
             )}
+          </Panel>
+
+          {/* ===== Блокировки по IP ===== */}
+          <Panel title="Блокировки по IP" icon="globe">
+            <IpBans list={bans} onChange={load} />
+          </Panel>
+
+          {/* ===== Антимат ===== */}
+          <Panel title="Антимат" icon="filter">
+            <Antimat data={prof} onChange={load} onOpen={openProfile} />
           </Panel>
 
           <div className="grid gap-5 md:grid-cols-2">
@@ -436,6 +463,271 @@ function Bar({ value, max }: { value: number; max: number }) {
 
 function Empty({ children }: { children: React.ReactNode }) {
   return <p className="py-2 text-sm text-[#64727f]">{children}</p>
+}
+
+/** Список закрытых адресов плюс поле, чтобы закрыть ещё один — можно сразу подсеть. */
+function IpBans({ list, onChange }: { list: IpBan[]; onChange: () => Promise<void> }) {
+  const [ip, setIp] = useState('')
+  const [reason, setReason] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  async function act(fn: () => Promise<unknown>) {
+    setBusy(true)
+    setError(null)
+    try {
+      await fn()
+      await onChange()
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <>
+      <form
+        onSubmit={(e) => {
+          e.preventDefault()
+          if (!ip.trim()) return
+          void act(async () => {
+            await banIp(ip.trim(), reason)
+            setIp('')
+            setReason('')
+          })
+        }}
+        className="mb-3 flex flex-wrap gap-2"
+      >
+        <input
+          value={ip}
+          onChange={(e) => setIp(e.target.value)}
+          placeholder="203.0.113.7 или 203.0.113.0/24"
+          className="min-w-[200px] flex-1 rounded-lg border border-[#2a3340] bg-[#0e1116] px-3 py-2 font-mono text-sm outline-none placeholder:font-sans placeholder:text-[#64727f] focus:border-[#58a6ff]"
+        />
+        <input
+          value={reason}
+          onChange={(e) => setReason(e.target.value)}
+          placeholder="Причина"
+          className="min-w-[140px] flex-1 rounded-lg border border-[#2a3340] bg-[#0e1116] px-3 py-2 text-sm outline-none placeholder:text-[#64727f] focus:border-[#58a6ff]"
+        />
+        <button
+          disabled={busy || !ip.trim()}
+          className="rounded-lg border border-red-500/40 px-3 py-2 text-sm text-red-300 transition hover:bg-red-500/10 disabled:opacity-40"
+        >
+          Закрыть доступ
+        </button>
+      </form>
+
+      {error && <p className="mb-2 text-sm text-red-300">{error}</p>}
+
+      {list.length === 0 ? (
+        <Empty>Пока никого не закрывали. Адреса людей видны в их карточке.</Empty>
+      ) : (
+        list.map((b) => (
+          <div key={b.ip} className="flex items-center gap-3 border-t border-[#1c2430] py-2 first:border-0">
+            <Icon name="globe" size={15} className="shrink-0 text-[#f85149]" />
+            <div className="min-w-0 flex-1">
+              <div className="truncate font-mono text-sm">{b.ip}</div>
+              <div className="truncate text-xs text-[#64727f]">
+                {b.auto ? 'автоматически' : 'вручную'} · {fullDateTime(b.created_at)}
+                {b.reason ? ` · ${b.reason}` : ''}
+                {b.people > 0 &&
+                  ` · ${plural(b.people, 'аккаунт', 'аккаунта', 'аккаунтов')} под блокировкой`}
+              </div>
+            </div>
+            <button
+              disabled={busy}
+              onClick={() => void act(() => unbanIp(b.ip))}
+              className="shrink-0 rounded-md border border-[#2a3340] px-2 py-1 text-xs text-[#9aa7b4] transition hover:text-white disabled:opacity-40"
+            >
+              открыть
+            </button>
+          </div>
+        ))
+      )}
+
+      <p className="mt-3 text-xs leading-relaxed text-[#64727f]">
+        Адрес сверяется при каждой отправке сообщения и при входе в чаты. Помните: за одним
+        адресом мобильного оператора сидят тысячи людей — блокируя его, вы закрываете доступ и
+        им. Подсеть вида /24 закрывает сразу 256 адресов.
+      </p>
+    </>
+  )
+}
+
+/** Словарь мата, счётчик срабатываний и те, кому уже прилетело. */
+function Antimat({
+  data,
+  onChange,
+  onOpen,
+}: {
+  data: Profanity | null
+  onChange: () => Promise<void>
+  onOpen: (id: string) => void
+}) {
+  const [word, setWord] = useState('')
+  const [hard, setHard] = useState(false)
+  const [exact, setExact] = useState(false)
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const [all, setAll] = useState(false)
+
+  if (!data) return <Empty>Загружаем…</Empty>
+
+  async function act(fn: () => Promise<unknown>) {
+    setBusy(true)
+    setError(null)
+    try {
+      await fn()
+      await onChange()
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const words = all ? data.words : data.words.filter((w) => w.custom)
+
+  return (
+    <>
+      <div className="mb-3 flex flex-wrap gap-5">
+        <Big value={data.hits_today} label="срабатываний сегодня" tone="#d29922" />
+        <Big value={data.hits_total} label="за всё время" tone="#9aa7b4" />
+        <Big value={data.auto_muted} label="молчат автоматом" tone="#58a6ff" />
+        <Big value={data.auto_banned} label="забанены автоматом" tone="#f85149" />
+      </div>
+
+      {data.top.length > 0 && (
+        <div className="border-t border-[#1c2430] pt-2">
+          {data.top.map((u) => (
+            <div key={u.id} className="flex items-center gap-3 py-1.5">
+              <button onClick={() => onOpen(u.id)} title="Открыть профиль" className="shrink-0">
+                <Avatar name={u.display_name ?? u.username} seed={u.id} url={u.avatar_url} size={28} />
+              </button>
+              <button onClick={() => onOpen(u.id)} className="min-w-0 flex-1 text-left">
+                <div className="truncate text-sm">{u.display_name ?? u.username}</div>
+                <div className="truncate text-xs text-[#64727f]">
+                  {plural(u.total, 'срабатывание', 'срабатывания', 'срабатываний')}
+                  {u.last_word ? ` · последнее «${u.last_word}»` : ''}
+                </div>
+              </button>
+              <span
+                className="shrink-0 text-xs tabular-nums"
+                style={{ color: u.strikes >= 6 ? '#f85149' : u.strikes >= 3 ? '#d29922' : '#64727f' }}
+                title={strikeHint(u.strikes)}
+              >
+                {u.strikes} балл.
+              </span>
+              <button
+                disabled={busy || u.strikes === 0}
+                onClick={() => void act(() => resetStrikes(u.id))}
+                className="shrink-0 rounded-md border border-[#2a3340] px-2 py-1 text-xs text-[#9aa7b4] transition hover:text-white disabled:opacity-30"
+              >
+                обнулить
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+
+      <form
+        onSubmit={(e) => {
+          e.preventDefault()
+          if (!word.trim()) return
+          void act(async () => {
+            await addBadWord(word, hard ? 2 : 1, exact)
+            setWord('')
+          })
+        }}
+        className="mt-3 flex flex-wrap items-center gap-2 border-t border-[#1c2430] pt-3"
+      >
+        <input
+          value={word}
+          onChange={(e) => setWord(e.target.value)}
+          placeholder="Добавить слово"
+          className="min-w-[160px] flex-1 rounded-lg border border-[#2a3340] bg-[#0e1116] px-3 py-2 text-sm outline-none placeholder:text-[#64727f] focus:border-[#58a6ff]"
+        />
+        <Chip active={hard} onClick={() => setHard((v) => !v)} title="Два балла вместо одного">
+          грубое
+        </Chip>
+        <Chip active={exact} onClick={() => setExact((v) => !v)} title="Не искать внутри других слов">
+          целиком
+        </Chip>
+        <button
+          disabled={busy || !word.trim()}
+          className="rounded-lg border border-[#2a3340] px-3 py-2 text-sm text-[#9aa7b4] transition hover:text-white disabled:opacity-40"
+        >
+          Добавить
+        </button>
+      </form>
+
+      {error && <p className="mt-2 text-sm text-red-300">{error}</p>}
+
+      <div className="mt-3 flex flex-wrap gap-1.5">
+        {words.map((w) => (
+          <span
+            key={w.word}
+            title={`${w.severity === 2 ? 'грубое' : 'мягкое'}${w.exact ? ' · целиком' : ''}`}
+            className={`flex items-center gap-1 rounded-md border px-2 py-0.5 text-xs ${
+              w.severity === 2
+                ? 'border-red-500/30 text-red-300/80'
+                : 'border-[#2a3340] text-[#9aa7b4]'
+            }`}
+          >
+            {w.word}
+            <button
+              disabled={busy}
+              onClick={() => void act(() => removeBadWord(w.word))}
+              title="Убрать из словаря"
+              className="text-[#64727f] transition hover:text-white disabled:opacity-40"
+            >
+              <Icon name="close" size={11} />
+            </button>
+          </span>
+        ))}
+        <button
+          onClick={() => setAll((v) => !v)}
+          className="rounded-md border border-dashed border-[#2a3340] px-2 py-0.5 text-xs text-[#64727f] hover:text-white"
+        >
+          {all ? 'свернуть словарь' : `весь словарь · ${data.words.length}`}
+        </button>
+      </div>
+
+      <p className="mt-3 text-xs leading-relaxed text-[#64727f]">
+        Фильтр ловит слово даже с заменой букв на похожие (@, 0, 3, латиница) и растянутое
+        «хуууй». Сообщение не отклоняется: мат заменяется звёздочками, а автору добавляется балл.
+        3 балла — час тишины, 6 — сутки, 9 — блокировка. Главного админа фильтр не трогает, а в
+        каждой группе его можно выключить в настройках.
+      </p>
+    </>
+  )
+}
+
+function Chip({
+  active,
+  onClick,
+  title,
+  children,
+}: {
+  active: boolean
+  onClick: () => void
+  title: string
+  children: React.ReactNode
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      title={title}
+      className={`rounded-lg border px-2.5 py-2 text-xs transition ${
+        active ? 'border-[#d29922] text-[#e3b341]' : 'border-[#2a3340] text-[#64727f] hover:text-white'
+      }`}
+    >
+      {children}
+    </button>
+  )
 }
 
 /** Строка наказанного человека: карточка по клику и одна кнопка, чтобы отменить. */

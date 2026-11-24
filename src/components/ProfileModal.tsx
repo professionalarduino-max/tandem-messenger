@@ -2,12 +2,24 @@ import { useCallback, useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useAuth } from '../hooks/useAuth'
 import { Avatar, AdminBadge } from './Avatar'
-import { Icon } from './Icon'
+import { Icon, type IconName } from './Icon'
 import { createDirect } from '../lib/api/conversations'
 import { getUserCard, getUserCardByName } from '../lib/api/profiles'
-import { muteActive, purgeUserMessages, setBan, setMute, setSuperAdmin } from '../lib/api/moderation'
+import {
+  banIp,
+  banUserIps,
+  getStrikes,
+  getUserIps,
+  muteActive,
+  purgeUserMessages,
+  resetStrikes,
+  setBan,
+  setMute,
+  setSuperAdmin,
+  unbanIp,
+} from '../lib/api/moderation'
 import { fullDateTime, isOnline, lastSeenLabel, plural } from '../lib/format'
-import type { UserCard } from '../types/db'
+import type { Strikes, UserCard, UserIp } from '../types/db'
 
 /** Сроки мута, которые чаще всего и нужны. */
 const MUTES: [number, string][] = [
@@ -35,6 +47,8 @@ export function ProfileModal({
   const [busy, setBusy] = useState(false)
   const [reason, setReason] = useState('')
   const [tools, setTools] = useState(false)
+  const [ips, setIps] = useState<UserIp[] | null>(null)
+  const [strikes, setStrikes] = useState<Strikes | null>(null)
 
   const load = useCallback(async () => {
     try {
@@ -45,6 +59,13 @@ export function ProfileModal({
       setError(e instanceof Error ? e.message : String(e))
     }
   }, [userId, username])
+
+  /** Адреса и предупреждения тянем отдельно: они нужны, только когда админ раскрыл инструменты. */
+  const loadTools = useCallback(async (id: string) => {
+    const [list, s] = await Promise.all([getUserIps(id), getStrikes(id)])
+    setIps(list)
+    setStrikes(s)
+  }, [])
 
   useEffect(() => {
     load()
@@ -66,6 +87,7 @@ export function ProfileModal({
       setNote(label)
       setReason('')
       await load()
+      if (tools && card) await loadTools(card.id)
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
     } finally {
@@ -247,7 +269,11 @@ export function ProfileModal({
               {canModerate && (
                 <div className="mt-5 border-t border-[#2a3340] pt-4">
                   <button
-                    onClick={() => setTools((v) => !v)}
+                    onClick={() => {
+                      const next = !tools
+                      setTools(next)
+                      if (next && ips === null) void loadTools(card.id).catch(() => setIps([]))
+                    }}
                     className="flex w-full items-center gap-2 text-sm font-semibold text-[#d29922]"
                   >
                     <Icon name="shield" size={15} />
@@ -347,9 +373,98 @@ export function ProfileModal({
                         </div>
                       )}
 
+                      {/* ===== Предупреждения за мат ===== */}
+                      {strikes && strikes.total > 0 && (
+                        <div className="rounded-lg border border-[#2a3340] bg-[#0e1116] px-3 py-2">
+                          <div className="flex items-center gap-2 text-xs">
+                            <Icon name="filter" size={13} className="text-[#d29922]" />
+                            <span className="text-[#9aa7b4]">
+                              Антимат: {plural(strikes.strikes, 'балл', 'балла', 'баллов')} ·{' '}
+                              {plural(strikes.total, 'срабатывание', 'срабатывания', 'срабатываний')}
+                            </span>
+                            <button
+                              disabled={busy || strikes.strikes === 0}
+                              onClick={() => run('Баллы обнулены', () => resetStrikes(card.id))}
+                              className="ml-auto text-[#58a6ff] hover:underline disabled:opacity-40"
+                            >
+                              обнулить
+                            </button>
+                          </div>
+                          {strikes.last_word && (
+                            <div className="mt-1 text-[11px] text-[#64727f]">
+                              последнее: «{strikes.last_word}»
+                              {strikes.last_at ? ` · ${fullDateTime(strikes.last_at)}` : ''}
+                            </div>
+                          )}
+                        </div>
+                      )}
+
+                      {/* ===== Адреса ===== */}
+                      <div>
+                        <div className="mb-1.5 flex items-center gap-2 text-xs text-[#64727f]">
+                          <Icon name="globe" size={13} />
+                          {ips === null
+                            ? 'Загружаем адреса…'
+                            : ips.length === 0
+                              ? 'Адресов пока не видно — они пишутся при заходе в мессенджер'
+                              : `Адреса · ${ips.length}`}
+                          {ips && ips.length > 0 && (
+                            <button
+                              disabled={busy}
+                              onClick={() => {
+                                if (!confirm(`Закрыть все ${ips.length} адресов @${card.username}?`))
+                                  return
+                                run('Адреса закрыты', async () => {
+                                  const n = await banUserIps(card.id, reason)
+                                  setNote(`Закрыто ${plural(n, 'адрес', 'адреса', 'адресов')}`)
+                                })
+                              }}
+                              className="ml-auto text-[#f85149] hover:underline disabled:opacity-40"
+                            >
+                              забанить все
+                            </button>
+                          )}
+                        </div>
+                        {ips?.map((row) => (
+                          <div
+                            key={row.ip}
+                            className="flex items-center gap-2 border-t border-[#1c2430] py-1.5 text-xs first:border-0"
+                          >
+                            <span
+                              className={`font-mono ${row.banned ? 'text-[#f85149] line-through' : 'text-[#9aa7b4]'}`}
+                            >
+                              {row.ip}
+                            </span>
+                            <span className="truncate text-[11px] text-[#64727f]">
+                              {plural(row.hits, 'вход', 'входа', 'входов')} ·{' '}
+                              {lastSeenLabel(row.last_seen)}
+                              {row.shared_with > 0 &&
+                                ` · ещё ${plural(row.shared_with, 'аккаунт', 'аккаунта', 'аккаунтов')}`}
+                            </span>
+                            <button
+                              disabled={busy}
+                              onClick={() =>
+                                row.banned
+                                  ? run('Адрес открыт', () => unbanIp(row.ip))
+                                  : run('Адрес закрыт', () => banIp(row.ip, reason))
+                              }
+                              className={`ml-auto shrink-0 rounded-md border border-[#2a3340] px-2 py-0.5 transition disabled:opacity-40 ${
+                                row.banned
+                                  ? 'text-[#3fb950] hover:border-[#3fb950]'
+                                  : 'text-[#9aa7b4] hover:border-[#f85149] hover:text-[#f85149]'
+                              }`}
+                            >
+                              {row.banned ? 'открыть' : 'забанить'}
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+
                       <p className="text-xs leading-relaxed text-[#64727f]">
                         Бан закрывает вход и запрещает писать везде, мут — только отправку
-                        сообщений и реакций. Проверку делает сама база.
+                        сообщений и реакций. Проверку делает сама база. Бан по IP — мера грубая:
+                        у мобильных операторов один адрес на тысячи людей, и вместе с нарушителем закроется
+                        доступ соседям.
                       </p>
                     </div>
                   )}
@@ -382,7 +497,7 @@ function Action({
   onClick,
   children,
 }: {
-  icon: 'ban' | 'check' | 'crown' | 'trash'
+  icon: IconName
   tone: string
   busy: boolean
   onClick: () => void

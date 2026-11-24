@@ -34,7 +34,7 @@ import {
   subscribeToDirectory,
   subscribeToTyping,
 } from '../lib/api/realtime'
-import { muteActive, pinConversationForAll } from '../lib/api/moderation'
+import { getMyStrikes, muteActive, pinConversationForAll, strikeHint } from '../lib/api/moderation'
 import { chatWords, isChannel, isPublicChat } from '../lib/chat'
 import { humanSize, isImage } from '../lib/image'
 import { durationLabel, VoiceRecorder, voiceSupported } from '../lib/voice'
@@ -73,6 +73,7 @@ export default function ChatView() {
   const [dragging, setDragging] = useState(false)
   const [loading, setLoading] = useState(true)
   const [sendError, setSendError] = useState<string | null>(null)
+  const [censored, setCensored] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
 
   const scroller = useRef<HTMLDivElement>(null)
@@ -443,6 +444,15 @@ export default function ChatView() {
         durationMs: voice?.durationMs ?? null,
       })
       setMessages((p) => p.map((m) => (m.client_id === clientId ? saved : m)))
+      // антимат правит текст прямо в базе — предупреждаем, иначе выглядит как баг
+      if (body && saved.body && saved.body !== body) {
+        const mine = await getMyStrikes().catch(() => null)
+        setCensored(
+          mine
+            ? `Мат заменён звёздочками. Баллов: ${mine.strikes} — ${strikeHint(mine.strikes)}.`
+            : 'Мат заменён звёздочками.',
+        )
+      }
       if (!members.some((m) => m.user_id === me)) setMembers(await listMembers(id))
     } catch (err) {
       console.error(err)
@@ -1012,6 +1022,16 @@ export default function ChatView() {
         )}
 
         {sendError && <p className="mb-2 text-sm text-red-300">{sendError}</p>}
+        {censored && (
+          <button
+            onClick={() => setCensored(null)}
+            className="mb-2 flex w-full items-center gap-2 rounded-lg border border-[#d29922]/40 bg-[#d29922]/10 px-3 py-2 text-left text-sm text-[#e3b341]"
+          >
+            <Icon name="filter" size={15} className="shrink-0" />
+            <span className="flex-1">{censored}</span>
+            <Icon name="close" size={14} className="shrink-0 opacity-60" />
+          </button>
+        )}
 
         {banned ? (
           <div className="flex items-center gap-2 rounded-xl border border-red-500/40 bg-red-500/10 px-3 py-3 text-sm text-red-300">

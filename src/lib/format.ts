@@ -52,6 +52,15 @@ export function untilLabel(iso: string, now: number = Date.now()) {
 }
 
 /** «23 ноября, 18:30» — срок вскрытия капсулы. */
+/** Дата без времени: «24 ноября 2026». */
+export function fullDate(iso: string) {
+  return new Date(iso).toLocaleDateString('ru-RU', {
+    day: 'numeric',
+    month: 'long',
+    year: 'numeric',
+  })
+}
+
 export function fullDateTime(iso: string) {
   return new Date(iso).toLocaleString('ru-RU', {
     day: 'numeric',

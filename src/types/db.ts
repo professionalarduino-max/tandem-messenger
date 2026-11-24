@@ -13,6 +13,8 @@ export interface ConversationSettings {
   /** видна ли переписка тем, кто ещё не вступил */
   history_visible: boolean
   reactions_enabled: boolean
+  /** замазывать мат звёздочками и выдавать предупреждения */
+  profanity_filter: boolean
 }
 
 export interface Profile {
@@ -355,4 +357,79 @@ export interface PremiumStatus {
   messages_14d: number
   last_message_at: string | null
   packs: PremiumPack[]
+}
+
+/** Адрес, с которого человек заходил. Виден только главному админу. */
+export interface UserIp {
+  ip: string
+  first_seen: string
+  last_seen: string
+  hits: number
+  banned: boolean
+  /** сколько ещё аккаунтов заходило с этого же адреса */
+  shared_with: number
+}
+
+/** Строка списка заблокированных адресов. */
+export interface IpBan {
+  ip: string
+  reason: string | null
+  /** поставлен автоматически, а не руками */
+  auto: boolean
+  created_at: string
+  /** сколько known аккаунтов попадает под эту блокировку */
+  people: number
+}
+
+/** Слово из словаря антимата. */
+export interface BadWord {
+  word: string
+  /** 1 — мягкое, 2 — грубое: столько баллов добавляет одно сообщение */
+  severity: number
+  /** сравнивать слово целиком, а не искать внутри другого */
+  exact: boolean
+  /** добавлено админом, а не из базового набора */
+  custom: boolean
+}
+
+/** Сводка антимата для админ-панели. */
+export interface Profanity {
+  words: BadWord[]
+  hits_total: number
+  hits_today: number
+  auto_muted: number
+  auto_banned: number
+  top: {
+    id: string
+    username: string
+    display_name: string | null
+    avatar_url: string | null
+    strikes: number
+    total: number
+    last_word: string | null
+    last_at: string | null
+  }[]
+  recent: {
+    word: string
+    at: string
+    username: string | null
+    display_name: string | null
+  }[]
+}
+
+/** Мои предупреждения за мат — по ним показываем подсказку в чате. */
+export interface MyStrikes {
+  strikes: number
+  total: number
+  last_at: string | null
+}
+
+/** Счётчик мата конкретного человека: его видит он сам и главный админ. */
+export interface Strikes {
+  /** баллы до следующего наказания; обнуляются админом */
+  strikes: number
+  /** всего срабатываний за всё время */
+  total: number
+  last_word: string | null
+  last_at: string | null
 }

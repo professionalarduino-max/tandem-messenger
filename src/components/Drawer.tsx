@@ -5,6 +5,7 @@ import { useProfileCard } from '../hooks/useProfileCard'
 import { Avatar, AdminBadge } from './Avatar'
 import { Icon, type IconName } from './Icon'
 import { signOut } from '../lib/api/auth'
+import { hasUnseenRelease, LATEST } from '../lib/changelog'
 import { APP_NAME } from '../config'
 
 export type DrawerTab = 'chats' | 'groups' | 'people'
@@ -111,6 +112,12 @@ export function Drawer({
 
           <Divider />
 
+          <Item
+            icon="gift"
+            label="Что нового"
+            dot={hasUnseenRelease()}
+            onClick={() => go(() => nav('/news'))}
+          />
           <Item icon="settings" label="Настройки" onClick={() => go(() => nav('/settings'))} />
           {profile?.is_super_admin && (
             <Item
@@ -132,7 +139,7 @@ export function Drawer({
         </nav>
 
         <footer className="border-t border-[#2a3340] px-4 py-3 text-xs text-[#64727f]">
-          {APP_NAME} · мессенджер для своих
+          {APP_NAME} · версия {LATEST.version}
         </footer>
       </aside>
     </div>
@@ -145,6 +152,7 @@ function Item({
   onClick,
   active = false,
   badge,
+  dot = false,
   tone = '',
 }: {
   icon: IconName
@@ -152,6 +160,8 @@ function Item({
   onClick: () => void
   active?: boolean
   badge?: number
+  /** точка «есть непрочитанное» — без числа */
+  dot?: boolean
   tone?: string
 }) {
   return (
@@ -168,6 +178,7 @@ function Item({
           {badge}
         </span>
       ) : null}
+      {dot && <span className="h-2 w-2 shrink-0 rounded-full bg-[#bc8cff]" title="Новое" />}
     </button>
   )
 }

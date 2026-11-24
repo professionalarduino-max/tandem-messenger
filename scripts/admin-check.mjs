@@ -59,6 +59,8 @@ try {
     'Капсулы времени',
     'Самые активные',
     'Премиум-эмодзи',
+    'Блокировки по IP',
+    'Антимат',
     'Живые группы и каналы',
     'Новые пользователи',
   ]) {
@@ -227,7 +229,16 @@ try {
   await page.locator('button[title="Меню"]').first().click()
   const drawer = page.locator('div[class*="z-[70]"]')
   await drawer.waitFor({ timeout: 10000 })
-  const drawerItems = ['Новая группа', 'Новый канал', 'Чаты', 'Группы и каналы', 'Люди', 'Настройки', 'Выйти']
+  const drawerItems = [
+    'Новая группа',
+    'Новый канал',
+    'Чаты',
+    'Группы и каналы',
+    'Люди',
+    'Что нового',
+    'Настройки',
+    'Выйти',
+  ]
   const noItem = []
   for (const name of drawerItems) {
     // у «Чатов» рядом может висеть счётчик непрочитанного, поэтому сверяем начало названия
@@ -263,7 +274,14 @@ try {
   await page.waitForSelector('textarea', { timeout: 15000 })
   await page.locator('button[title="Настройки группы"]').first().click()
   await page.getByRole('button', { name: /^Правила$/ }).click()
-  const rules = ['Кто может писать', 'Медленный режим', 'Показывать в каталоге', 'История видна всем', 'Реакции']
+  const rules = [
+    'Кто может писать',
+    'Медленный режим',
+    'Показывать в каталоге',
+    'История видна всем',
+    'Реакции',
+    'Антимат',
+  ]
   const noRule = []
   for (const r of rules) {
     const seen = await page.getByText(r, { exact: true }).first().isVisible().catch(() => false)
@@ -298,6 +316,15 @@ try {
   await page.goto(`${BASE}/admin`, { waitUntil: 'networkidle' })
   await page.getByText('Модерация и закрепления').waitFor({ timeout: 20000 })
   ok('в админ-панели есть сводка модерации')
+
+  // ===== что нового =====
+  await page.goto(`${BASE}/news`, { waitUntil: 'networkidle' })
+  await page.getByRole('heading', { name: 'Что нового', level: 1 }).waitFor({ timeout: 20000 })
+  const releases = await page.locator('section[class*="pl-7"]').count()
+  releases >= 4 ? ok('лента обновлений на месте', `${releases} выпуска`) : fail('лента обновлений', String(releases))
+  const newsText = await page.locator('body').innerText()
+  const noNews = ['свежее', 'Антимат', 'Блокировка по IP'].filter((t) => !newsText.includes(t))
+  noNews.length === 0 ? ok('свежий выпуск описан') : fail('нет в выпуске', noNews.join(', '))
 
   // ===== собака в настройках =====
   await page.goto(`${BASE}/settings`, { waitUntil: 'networkidle' })

@@ -915,6 +915,144 @@ const run = async () => {
   })
   check('премиум нельзя протащить правкой', !premiumEdit.ok, `статус ${premiumEdit.status}`)
 
+  // ===== антимат =====
+  console.log('\n— Антимат —')
+  const sendAs = async (token, id, body) => {
+    const r = await post(token, 'messages', {
+      conversation_id: gid,
+      sender_id: id,
+      body,
+      client_id: crypto.randomUUID(),
+    })
+    let saved = null
+    try {
+      saved = JSON.parse(r.body)[0] ?? null
+    } catch {
+      saved = null
+    }
+    return { ...r, saved }
+  }
+
+  const mat = await sendAs(guest.token, guest.id, 'ты мудак и всё')
+  check('сообщение с матом не отклоняется', mat.ok, `статус ${mat.status}`)
+  check('…а приходит с замазанным словом', mat.saved?.body === 'ты *** и всё', String(mat.saved?.body))
+
+  const innocent = 'погребать требовать хлебать колебать получка сучок херувим педиатр'
+  const clean = await sendAs(guest.token, guest.id, innocent)
+  check('похожие приличные слова фильтр не трогает', clean.saved?.body === innocent, String(clean.saved?.body))
+
+  const spaced = await sendAs(guest.token, guest.id, 'х у й тебе')
+  check('мат по буквам через пробел тоже ловится', spaced.saved?.body === '* * * тебе', String(spaced.saved?.body))
+
+  const myStrikes = await rpc(guest.token, 'my_strikes')
+  check('баллы начислены: 1 за мягкое, 2 за грубое', myStrikes.strikes === 3, `баллов: ${myStrikes.strikes}`)
+
+  const autoMute = await get(admin.token, `user_moderation?select=muted_until,mute_reason&user_id=eq.${guest.id}`)
+  check('на третьем балле автомат выдал мут', autoMute[0]?.mute_reason === 'Автомут: мат', String(autoMute[0]?.muted_until))
+
+  const afterMute = await sendAs(guest.token, guest.id, 'а теперь просто текст')
+  check('во время автомута писать нельзя', !afterMute.ok, `статус ${afterMute.status}`)
+
+  const peekStrikes = await get(stranger.token, `profanity_strikes?select=strikes&user_id=eq.${guest.id}`)
+  check('чужие баллы обычному пользователю не видны', peekStrikes.length === 0)
+
+  const strangerReset = await tryRpc(stranger.token, 'admin_reset_strikes', { uid_in: guest.id })
+  check('обнулить баллы может только главный админ', !strangerReset.ok, `статус ${strangerReset.status}`)
+
+  await rpc(admin.token, 'admin_set_mute', { uid_in: guest.id, minutes: 0 })
+  await rpc(admin.token, 'admin_reset_strikes', { uid_in: guest.id })
+  const zeroed = await rpc(guest.token, 'my_strikes')
+  check(
+    'админ обнуляет баллы, история остаётся',
+    zeroed.strikes === 0 && zeroed.total === 2,
+    `баллов: ${zeroed.strikes}, срабатываний: ${zeroed.total}`,
+  )
+
+  const adminMat = await sendAs(admin.token, admin.id, 'я главный и могу сказать мудак')
+  check('главного админа фильтр не трогает', adminMat.saved?.body?.includes('мудак') === true, String(adminMat.saved?.body))
+
+  await patch(admin.token, `conversations?id=eq.${gid}`, { profanity_filter: false })
+  const unfiltered = await sendAs(guest.token, guest.id, 'без фильтра мудак проходит')
+  check('выключенный в группе фильтр не срабатывает', unfiltered.saved?.body?.includes('мудак') === true, String(unfiltered.saved?.body))
+  await patch(admin.token, `conversations?id=eq.${gid}`, { profanity_filter: true })
+
+  const dirtyTitle = await tryRpc(friend.token, 'create_group', {
+    title_in: 'Группа мудаков',
+    description_in: 'проверка названия',
+  })
+  check('группу с матом в названии не создать', !dirtyTitle.ok, `статус ${dirtyTitle.status}`)
+
+  const dirtyName = await patch(guest.token, `profiles?id=eq.${guest.id}`, { display_name: 'Мудак Мудакович' })
+  check('и имя профиля с матом не сохранить', !dirtyName.ok, `статус ${dirtyName.status}`)
+
+  const strangerWord = await tryRpc(stranger.token, 'admin_add_bad_word', { word_in: 'тест', severity_in: 1 })
+  check('словарь правит только главный админ', !strangerWord.ok, `статус ${strangerWord.status}`)
+
+  await rpc(admin.token, 'admin_add_bad_word', { word_in: 'ерундистика', severity_in: 1, exact_in: false })
+  const withWord = await sendAs(guest.token, guest.id, 'полная ерундистика')
+  check('добавленное слово сразу работает', withWord.saved?.body === 'полная ***', String(withWord.saved?.body))
+
+  await rpc(admin.token, 'admin_remove_bad_word', { word_in: 'ерундистика' })
+  const withoutWord = await sendAs(guest.token, guest.id, 'снова ерундистика')
+  check('убранное слово перестаёт ловиться', withoutWord.saved?.body === 'снова ерундистика', String(withoutWord.saved?.body))
+
+  const profSummary = await rpc(admin.token, 'admin_profanity')
+  check('сводка антимата считает срабатывания', profSummary.hits_total >= 3, `всего: ${profSummary.hits_total}`)
+  check('и показывает словарь', profSummary.words?.length >= 35, `слов: ${profSummary.words?.length}`)
+  const strangerProf = await rpc(stranger.token, 'admin_profanity')
+  check('сводка антимата закрыта от обычных пользователей', !strangerProf.words)
+
+  await rpc(admin.token, 'admin_reset_strikes', { uid_in: guest.id })
+  await rpc(admin.token, 'admin_set_mute', { uid_in: guest.id, minutes: 0 })
+
+  // ===== адреса и блокировка по IP =====
+  console.log('\n— Адреса и IP —')
+  await rpc(guest.token, 'touch_last_seen')
+  await rpc(admin.token, 'touch_last_seen')
+  const guestIps = await rpc(admin.token, 'admin_user_ips', { uid_in: guest.id })
+  check('адрес записывается при заходе', guestIps.length >= 1, `адресов: ${guestIps.length}`)
+  check('видно, что с адреса сидит не один аккаунт', guestIps[0]?.shared_with >= 1, `соседей: ${guestIps[0]?.shared_with}`)
+
+  const strangerPeekIps = await rpc(stranger.token, 'admin_user_ips', { uid_in: guest.id })
+  check('чужие адреса обычному пользователю не видны', strangerPeekIps.length === 0)
+
+  const selfIpBan = await tryRpc(admin.token, 'admin_ban_ip', { ip_in: guestIps[0].ip })
+  check('свой собственный адрес закрыть нельзя', !selfIpBan.ok, `статус ${selfIpBan.status}`)
+
+  const banAll = await rpc(admin.token, 'admin_ban_user_ips', { uid_in: guest.id })
+  check('адреса, общие с главным админом, пропускаются', banAll === 0, `закрыто: ${banAll}`)
+
+  const banSelfAdmin = await tryRpc(admin.token, 'admin_ban_user_ips', { uid_in: admin.id })
+  check('адреса главного админа не банятся вовсе', !banSelfAdmin.ok, `статус ${banSelfAdmin.status}`)
+
+  const FAKE_IP = '203.0.113.7'
+  await rpc(admin.token, 'admin_ban_ip', { ip_in: FAKE_IP, reason_in: 'проверка' })
+  const bansNow = await rpc(admin.token, 'admin_ip_bans')
+  check('адрес попадает в список блокировок', bansNow.some((b) => b.ip === FAKE_IP), `записей: ${bansNow.length}`)
+
+  const banSubnet = await tryRpc(admin.token, 'admin_ban_ip', { ip_in: '203.0.113.0/24', reason_in: 'подсеть' })
+  check('подсеть закрывается одной записью', banSubnet.ok, `статус ${banSubnet.status}`)
+
+  const strangerBan = await tryRpc(stranger.token, 'admin_ban_ip', { ip_in: '198.51.100.9' })
+  check('обычный пользователь адреса не банит', !strangerBan.ok, `статус ${strangerBan.status}`)
+
+  const garbage = await tryRpc(admin.token, 'admin_ban_ip', { ip_in: 'совсем не адрес' })
+  check('мусор вместо адреса отклоняется', !garbage.ok, `статус ${garbage.status}`)
+
+  await rpc(admin.token, 'admin_unban_ip', { ip_in: FAKE_IP })
+  await rpc(admin.token, 'admin_unban_ip', { ip_in: '203.0.113.0/24' })
+  const bansAfter = await rpc(admin.token, 'admin_ip_bans')
+  check('блокировка снимается', !bansAfter.some((b) => b.ip === FAKE_IP), `осталось: ${bansAfter.length}`)
+
+  const anonIpBans = await fetch(`${URL}/rest/v1/ip_bans?select=ip`, {
+    headers: { apikey: ANON, 'Content-Type': 'application/json' },
+  })
+  const anonIpRows = await anonIpBans.json().catch(() => [])
+  check('список блокировок закрыт без входа', !Array.isArray(anonIpRows) || anonIpRows.length === 0)
+
+  const strangerIpTable = await get(stranger.token, 'user_ips?select=ip')
+  check('таблица адресов закрыта от обычных пользователей', strangerIpTable.length === 0)
+
   // ===== анонимный ключ не должен открывать каталог =====
   console.log('\n— Анонимный доступ —')
   for (const [fn, args] of [
@@ -951,9 +1089,17 @@ const run = async () => {
   for (const u of [friend, stranger, nosy, newbie, guest]) {
     await fetch(`${URL}/auth/v1/admin/users/${u.id}`, { method: 'DELETE', headers: SH })
   }
+  // тестовые адреса из TEST-NET-3 и словарное слово — на случай обрыва теста на середине
+  for (const addr of ['203.0.113.7', '203.0.113.0/24']) {
+    await fetch(`${URL}/rest/v1/ip_bans?ip=eq.${encodeURIComponent(addr)}`, { method: 'DELETE', headers: SH })
+  }
+  await fetch(`${URL}/rest/v1/bad_words?word=eq.${encodeURIComponent('ерундистика')}`, { method: 'DELETE', headers: SH })
 
   const leftovers = await get(admin.token, `conversations?select=id&id=in.(${gid},${dm},${chId})`)
   check('тестовые группы, каналы, диалоги, файлы и аккаунты удалены', leftovers.length === 0)
+
+  const leftBans = await rpc(admin.token, 'admin_ip_bans')
+  check('тестовые IP-блокировки сняты', !leftBans.some((b) => b.ip.startsWith('203.0.113.')), `записей: ${leftBans.length}`)
 
   console.log(
     `\n${failures === 0 ? `ВСЕ ПРОВЕРКИ ПРОШЛИ — ${total} из ${total}` : `ПРОВАЛЕНО ПРОВЕРОК: ${failures} из ${total}`}`,

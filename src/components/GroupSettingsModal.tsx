@@ -71,6 +71,7 @@ export function GroupSettingsModal({
     listed: conversation.listed,
     history_visible: conversation.history_visible,
     reactions_enabled: conversation.reactions_enabled,
+    profanity_filter: conversation.profanity_filter,
   })
 
   useEffect(() => {
@@ -308,6 +309,14 @@ export function GroupSettingsModal({
                 checked={rules.reactions_enabled}
                 disabled={!isAdmin}
                 onChange={(v) => setRules({ ...rules, reactions_enabled: v })}
+              />
+              <Toggle
+                icon="filter"
+                title="Антимат"
+                hint="Мат заменяется звёздочками, автору идёт предупреждение. 3 балла — час тишины, 6 — сутки, 9 — бан."
+                checked={rules.profanity_filter}
+                disabled={!isAdmin}
+                onChange={(v) => setRules({ ...rules, profanity_filter: v })}
               />
 
               {status && <p className="mt-4 text-sm text-[#9aa7b4]">{status}</p>}
