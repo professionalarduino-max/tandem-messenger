@@ -11,6 +11,7 @@ import {
   setBan,
   setMute,
 } from '../lib/api/moderation'
+import { chatWords, isChannel } from '../lib/chat'
 import { humanSize } from '../lib/image'
 import { fullDateTime, lastSeenLabel, plural, pluralWord, timeShort, untilLabel } from '../lib/format'
 import { APP_NAME } from '../config'
@@ -120,7 +121,7 @@ export default function Admin() {
               tone="#bc8cff"
               value={stats.conversations.total}
               label={pluralWord(stats.conversations.total, 'чат', 'чата', 'чатов')}
-              hint={`${plural(stats.conversations.groups, 'группа', 'группы', 'групп')} · ${stats.conversations.directs} личных`}
+              hint={`${plural(stats.conversations.groups, 'группа', 'группы', 'групп')} · ${plural(stats.conversations.channels, 'канал', 'канала', 'каналов')} · ${stats.conversations.directs} личных`}
             />
             <Card
               icon="database"
@@ -291,9 +292,20 @@ export default function Admin() {
             ))}
           </Panel>
 
-          {/* ===== Топ групп ===== */}
-          <Panel title="Живые группы" icon="chat">
-            {stats.top_groups.length === 0 && <Empty>Групп пока нет.</Empty>}
+          {/* ===== Премиум-эмодзи ===== */}
+          <Panel title="Премиум-эмодзи" icon="sparkle">
+            <div className="flex flex-wrap gap-6">
+              <Big value={stats.premium.emoji} label="эмодзи в наборах" tone="#d29922" />
+              <Big value={stats.premium.people} label="кому открыты" tone="#3fb950" />
+            </div>
+            <p className="mt-3 text-xs text-[#64727f]">
+              Премиум открыт админам групп и каналов и тем, кто писал за последние 14 дней.
+            </p>
+          </Panel>
+
+          {/* ===== Топ групп и каналов ===== */}
+          <Panel title="Живые группы и каналы" icon="chat">
+            {stats.top_groups.length === 0 && <Empty>Групп и каналов пока нет.</Empty>}
             {stats.top_groups.map((g) => (
               <button
                 key={g.id}
@@ -302,9 +314,16 @@ export default function Admin() {
               >
                 <Avatar name={g.title} seed={g.id} url={g.avatar_url} size={32} square />
                 <div className="min-w-0 flex-1">
-                  <div className="truncate text-sm font-medium"># {g.title ?? 'Без названия'}</div>
+                  <div className="flex items-center gap-1.5 text-sm font-medium">
+                    {isChannel(g.type) ? (
+                      <Icon name="megaphone" size={13} title="Канал" className="shrink-0 text-[#9aa7b4]" />
+                    ) : (
+                      <span className="text-[#64727f]">#</span>
+                    )}
+                    <span className="truncate">{g.title ?? 'Без названия'}</span>
+                  </div>
                   <div className="truncate text-xs text-[#64727f]">
-                    {plural(g.members, 'участник', 'участника', 'участников')} · последнее сообщение{' '}
+                    {plural(g.members, ...chatWords(g.type).members)} · последнее сообщение{' '}
                     {fullDateTime(g.last_message_at)}
                   </div>
                 </div>

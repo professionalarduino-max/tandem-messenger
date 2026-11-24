@@ -1,5 +1,11 @@
 import { supabase } from '../supabase'
-import type { Conversation, ConversationPreview, Member, PublicGroup } from '../../types/db'
+import type {
+  Conversation,
+  ConversationPreview,
+  ConversationSettings,
+  Member,
+  PublicGroup,
+} from '../../types/db'
 
 export async function listConversations(): Promise<ConversationPreview[]> {
   const { data, error } = await supabase.rpc('list_conversations')
@@ -7,7 +13,7 @@ export async function listConversations(): Promise<ConversationPreview[]> {
   return (data ?? []) as ConversationPreview[]
 }
 
-/** Каталог: группы видны всем пользователям, независимо от того, кто их создал. */
+/** Каталог: группы и каналы видны всем пользователям, независимо от того, кто их создал. */
 export async function listPublicGroups(query = ''): Promise<PublicGroup[]> {
   const { data, error } = await supabase.rpc('list_public_groups', { q: query })
   if (error) throw error
@@ -36,19 +42,35 @@ export async function createDirect(peerUserId: string): Promise<string> {
   return data as string
 }
 
-export async function createGroup(title: string, description = ''): Promise<string> {
-  const { data, error } = await supabase.rpc('create_group', {
+/** Создание группы или канала. Разница в одном поле, поэтому функция общая. */
+export async function createConversation(
+  title: string,
+  description = '',
+  type: 'group' | 'channel' = 'group',
+): Promise<string> {
+  const { data, error } = await supabase.rpc('create_conversation', {
     title_in: title,
     description_in: description,
+    type_in: type,
   })
   if (error) throw error
   return data as string
 }
 
+export function createGroup(title: string, description = '') {
+  return createConversation(title, description, 'group')
+}
+
+export function createChannel(title: string, description = '') {
+  return createConversation(title, description, 'channel')
+}
+
 /** Редактирование группы. RLS пропустит только администратора группы или главного админа. */
 export async function updateGroup(
   conversationId: string,
-  patch: { title?: string; description?: string | null; avatar_url?: string | null },
+  patch: { title?: string; description?: string | null; avatar_url?: string | null } & Partial<
+    ConversationSettings
+  >,
 ) {
   const { data, error } = await supabase
     .from('conversations')

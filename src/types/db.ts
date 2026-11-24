@@ -1,4 +1,19 @@
-export type ConversationType = 'direct' | 'group'
+export type ConversationType = 'direct' | 'group' | 'channel'
+
+/** Кто может писать: все участники или только админы. У каналов всегда admins. */
+export type PostingMode = 'all' | 'admins'
+
+/** Настройки группы или канала — всё, что меняется на вкладке «Настройки». */
+export interface ConversationSettings {
+  posting: PostingMode
+  /** пауза между сообщениями одного человека, секунды; 0 — выключено */
+  slow_mode_seconds: number
+  /** показывать в общем каталоге */
+  listed: boolean
+  /** видна ли переписка тем, кто ещё не вступил */
+  history_visible: boolean
+  reactions_enabled: boolean
+}
 
 export interface Profile {
   id: string
@@ -60,7 +75,12 @@ export interface UserCard {
   message_count: number
   reactions_got: number
   group_count: number
-  common_groups: { id: string; title: string | null; avatar_url: string | null }[]
+  common_groups: {
+    id: string
+    title: string | null
+    avatar_url: string | null
+    type: ConversationType
+  }[]
   /** личный чат с этим человеком, если он уже заведён */
   direct_id: string | null
   moderation: Moderation
@@ -139,7 +159,13 @@ export interface AdminModeration {
 export interface AdminStats {
   generated_at: string
   users: { total: number; online: number; active_day: number; active_week: number; new_week: number }
-  conversations: { total: number; groups: number; directs: number; active_week: number }
+  conversations: {
+    total: number
+    groups: number
+    channels: number
+    directs: number
+    active_week: number
+  }
   messages: {
     total: number
     deleted: number
@@ -155,6 +181,8 @@ export interface AdminStats {
   }
   reactions: number
   capsules: { sealed: number; opened: number; next_open_at: string | null }
+  /** премиум-эмодзи: сколько их всего и скольким людям они сейчас открыты */
+  premium: { emoji: number; people: number }
   daily: { day: string; messages: number }[]
   top_users: {
     id: string
@@ -169,6 +197,7 @@ export interface AdminStats {
     id: string
     title: string | null
     avatar_url: string | null
+    type: ConversationType
     members: number
     messages: number
     last_message_at: string
@@ -268,8 +297,10 @@ export interface ConversationPreview {
   is_home: boolean
 }
 
-export interface PublicGroup {
+/** Строка каталога: группа или канал. */
+export interface PublicGroup extends ConversationSettings {
   id: string
+  type: ConversationType
   title: string | null
   description: string | null
   avatar_url: string | null
@@ -278,6 +309,7 @@ export interface PublicGroup {
   member_count: number
   message_count: number
   i_am_member: boolean
+  i_am_admin: boolean
   creator_username: string | null
 }
 
@@ -291,7 +323,7 @@ export interface Member {
   >
 }
 
-export interface Conversation {
+export interface Conversation extends ConversationSettings {
   id: string
   type: ConversationType
   title: string | null
@@ -303,4 +335,24 @@ export interface Conversation {
   pinned_at: string | null
   pinned_by: string | null
   is_home: boolean
+}
+
+/** Пачка премиум-эмодзи: как её отдаёт premium_status(). */
+export interface PremiumPack {
+  pack: string
+  title: string
+  emoji: string[]
+}
+
+/** Доступ к премиум-эмодзи: кому открыт и почему. */
+export interface PremiumStatus {
+  allowed: boolean
+  is_super: boolean
+  /** админ хотя бы одной группы или канала */
+  is_admin: boolean
+  /** за сколько дней считаем активность */
+  window_days: number
+  messages_14d: number
+  last_message_at: string | null
+  packs: PremiumPack[]
 }

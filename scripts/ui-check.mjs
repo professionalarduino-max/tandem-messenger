@@ -23,11 +23,12 @@ await page.getByRole('button', { name: 'Войти' }).click()
 await page.getByText('@ABDev').waitFor({ timeout: 15000 })
 console.log('  OK   вход выполнен, профиль ABDev загружен')
 
-await page.getByRole('button', { name: 'Группы' }).click()
-await page.getByText('# Общий чат').waitFor({ timeout: 10000 })
+await page.getByRole('button', { name: 'Каталог' }).click()
+const home = page.locator('button[title="Открыть группу"]', { hasText: 'Общий чат' }).first()
+await home.waitFor({ timeout: 10000 })
 console.log('  OK   группа видна в общем каталоге')
 
-await page.getByText('# Общий чат').click()
+await home.click()
 await page.getByPlaceholder(/Сообщение/).waitFor({ timeout: 10000 })
 const text = `Проверка связи ${new Date().toLocaleTimeString('ru-RU')}`
 await page.getByPlaceholder(/Сообщение/).fill(text)

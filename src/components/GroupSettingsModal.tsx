@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { useProfileCard } from '../hooks/useProfileCard'
 import { Avatar, AdminBadge } from './Avatar'
 import { AvatarPicker } from './AvatarPicker'
-import { Icon } from './Icon'
+import { Icon, type IconName } from './Icon'
 import { InvitePanel } from './InvitePanel'
 import {
   addMember,
@@ -15,8 +15,20 @@ import {
 } from '../lib/api/conversations'
 import { searchUsers } from '../lib/api/profiles'
 import { removeConversationFiles, removeGroupAvatar, uploadGroupAvatar } from '../lib/api/storage'
-import { lastSeenLabel } from '../lib/format'
-import type { Conversation, Member, UserSearchResult } from '../types/db'
+import { chatWords, isChannel } from '../lib/chat'
+import { lastSeenLabel, pluralWord } from '../lib/format'
+import type { Conversation, ConversationSettings, Member, UserSearchResult } from '../types/db'
+
+/** Варианты медленного режима: сколько ждать между своими сообщениями. */
+const SLOW_MODES: [number, string][] = [
+  [0, 'выключен'],
+  [10, '10 секунд'],
+  [30, '30 секунд'],
+  [60, 'минута'],
+  [300, '5 минут'],
+  [900, '15 минут'],
+  [3600, 'час'],
+]
 
 export function GroupSettingsModal({
   conversation,
@@ -38,7 +50,7 @@ export function GroupSettingsModal({
   onDeleted: () => void
 }) {
   const { open: openProfile } = useProfileCard()
-  const [tab, setTab] = useState<'info' | 'members' | 'links'>('info')
+  const [tab, setTab] = useState<'info' | 'rules' | 'members' | 'links'>('info')
   const [title, setTitle] = useState(conversation.title ?? '')
   const [description, setDescription] = useState(conversation.description ?? '')
   const [avatarUrl, setAvatarUrl] = useState(conversation.avatar_url)
@@ -48,7 +60,18 @@ export function GroupSettingsModal({
   const [status, setStatus] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
 
+  const channel = isChannel(conversation.type)
+  const words = chatWords(conversation.type)
   const memberIds = new Set(list.map((m) => m.user_id))
+
+  // правила правим целиком и сохраняем одной кнопкой — так понятнее, чем автосейв на каждый чих
+  const [rules, setRules] = useState<ConversationSettings>({
+    posting: conversation.posting,
+    slow_mode_seconds: conversation.slow_mode_seconds,
+    listed: conversation.listed,
+    history_visible: conversation.history_visible,
+    reactions_enabled: conversation.reactions_enabled,
+  })
 
   useEffect(() => {
     if (tab !== 'members') return
@@ -63,14 +86,13 @@ export function GroupSettingsModal({
     await onChanged()
   }
 
-  async function saveInfo(e: React.FormEvent) {
-    e.preventDefault()
+  async function save(patch: Parameters<typeof updateGroup>[1], done = 'Сохранено') {
     setBusy(true)
     setStatus(null)
     try {
-      await updateGroup(conversation.id, { title: title.trim(), description: description.trim() || null })
+      await updateGroup(conversation.id, patch)
       await onChanged()
-      setStatus('Сохранено')
+      setStatus(done)
     } catch (err) {
       setStatus(err instanceof Error ? err.message : String(err))
     } finally {
@@ -88,7 +110,10 @@ export function GroupSettingsModal({
         className="flex max-h-[85vh] w-full max-w-[480px] flex-col overflow-hidden rounded-2xl border border-[#2a3340] bg-[#161b22]"
       >
         <div className="flex items-center justify-between border-b border-[#2a3340] px-5 py-3">
-          <h2 className="font-semibold">Настройки группы</h2>
+          <h2 className="flex items-center gap-2 font-semibold">
+            <Icon name={channel ? 'megaphone' : 'users'} size={17} className="text-[#9aa7b4]" />
+            Настройки {words.genitive}
+          </h2>
           <button onClick={onClose} title="Закрыть" className="text-[#9aa7b4] hover:text-white">
             <Icon name="close" size={18} />
           </button>
@@ -97,15 +122,16 @@ export function GroupSettingsModal({
         <div className="flex gap-1 px-5 pt-4">
           {(
             [
-              ['info', 'О группе'],
-              ['members', `Участники · ${list.length}`],
+              ['info', 'Инфо'],
+              ['rules', 'Правила'],
+              ['members', `${words.membersTitle} · ${list.length}`],
               ['links', 'Ссылки'],
             ] as const
           ).map(([k, label]) => (
             <button
               key={k}
               onClick={() => setTab(k)}
-              className={`flex-1 rounded-lg py-1.5 text-sm transition ${
+              className={`min-w-0 flex-1 truncate rounded-lg py-1.5 text-sm transition ${
                 tab === k ? 'bg-[#1c2430] text-white' : 'text-[#9aa7b4] hover:bg-[#0e1116]'
               }`}
             >
@@ -116,7 +142,12 @@ export function GroupSettingsModal({
 
         <div className="min-h-0 flex-1 overflow-y-auto p-5">
           {tab === 'info' && (
-            <form onSubmit={saveInfo}>
+            <form
+              onSubmit={(e) => {
+                e.preventDefault()
+                save({ title: title.trim(), description: description.trim() || null })
+              }}
+            >
               <div className="mb-5">
                 <AvatarPicker
                   name={title}
@@ -151,22 +182,23 @@ export function GroupSettingsModal({
                   value={description}
                   disabled={!isAdmin}
                   onChange={(e) => setDescription(e.target.value)}
-                  placeholder="О чём эта группа"
+                  placeholder={`О чём этот ${words.noun}`}
                 />
               </label>
 
               {status && <p className="mb-3 text-sm text-[#9aa7b4]">{status}</p>}
 
-              {isAdmin && (
+              {isAdmin ? (
                 <button
                   disabled={busy}
                   className="w-full rounded-lg bg-[#58a6ff] py-2.5 font-semibold text-[#0e1116] disabled:opacity-50"
                 >
                   {busy ? 'Сохраняем…' : 'Сохранить'}
                 </button>
-              )}
-              {!isAdmin && (
-                <p className="text-sm text-[#64727f]">Менять настройки может только админ группы.</p>
+              ) : (
+                <p className="text-sm text-[#64727f]">
+                  Менять настройки может только админ {words.genitive}.
+                </p>
               )}
 
               <div className="mt-6 flex flex-col gap-2 border-t border-[#2a3340] pt-4">
@@ -179,14 +211,14 @@ export function GroupSettingsModal({
                     }}
                     className="rounded-lg border border-[#2a3340] py-2 text-sm text-[#9aa7b4] hover:text-white"
                   >
-                    Покинуть группу
+                    {words.leave}
                   </button>
                 )}
                 {isAdmin && (
                   <button
                     type="button"
                     onClick={async () => {
-                      if (!confirm('Удалить группу со всеми сообщениями?')) return
+                      if (!confirm(`Удалить ${words.noun} со всеми сообщениями?`)) return
                       // сначала файлы: после удаления группы прав на них уже не будет
                       await removeConversationFiles(conversation.id)
                       await deleteConversation(conversation.id)
@@ -194,11 +226,106 @@ export function GroupSettingsModal({
                     }}
                     className="rounded-lg border border-red-500/30 py-2 text-sm text-red-300 hover:bg-red-500/10"
                   >
-                    Удалить группу
+                    Удалить {words.noun}
                   </button>
                 )}
               </div>
             </form>
+          )}
+
+          {tab === 'rules' && (
+            <>
+              <Section icon="edit" title="Кто может писать">
+                {channel ? (
+                  <p className="text-sm text-[#64727f]">
+                    В канале пишут только админы — это и есть канал. Остальные читают и ставят
+                    реакции.
+                  </p>
+                ) : (
+                  <div className="flex gap-1 rounded-xl border border-[#2a3340] p-1">
+                    {(
+                      [
+                        ['all', 'Все участники'],
+                        ['admins', 'Только админы'],
+                      ] as const
+                    ).map(([k, label]) => (
+                      <button
+                        key={k}
+                        disabled={!isAdmin}
+                        onClick={() => setRules({ ...rules, posting: k })}
+                        className={`flex-1 rounded-lg py-2 text-sm transition disabled:opacity-60 ${
+                          rules.posting === k
+                            ? 'bg-[#1c2430] text-white'
+                            : 'text-[#9aa7b4] hover:bg-[#0e1116]'
+                        }`}
+                      >
+                        {label}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </Section>
+
+              <Section
+                icon="gauge"
+                title="Медленный режим"
+                hint="Сколько ждать между своими сообщениями. Админов не касается."
+              >
+                <select
+                  className={input}
+                  disabled={!isAdmin}
+                  value={rules.slow_mode_seconds}
+                  onChange={(e) => setRules({ ...rules, slow_mode_seconds: Number(e.target.value) })}
+                >
+                  {SLOW_MODES.map(([v, label]) => (
+                    <option key={v} value={v}>
+                      {label}
+                    </option>
+                  ))}
+                </select>
+              </Section>
+
+              <Toggle
+                icon="search"
+                title="Показывать в каталоге"
+                hint={`Выключите — и ${words.noun} найдут только по ссылке.`}
+                checked={rules.listed}
+                disabled={!isAdmin}
+                onChange={(v) => setRules({ ...rules, listed: v })}
+              />
+              <Toggle
+                icon="eye"
+                title="История видна всем"
+                hint={`Выключите — переписку увидят только ${words.membersTitle.toLowerCase()}.`}
+                checked={rules.history_visible}
+                disabled={!isAdmin}
+                onChange={(v) => setRules({ ...rules, history_visible: v })}
+              />
+              <Toggle
+                icon="smile"
+                title="Реакции"
+                hint="Разрешить ставить эмодзи под сообщениями."
+                checked={rules.reactions_enabled}
+                disabled={!isAdmin}
+                onChange={(v) => setRules({ ...rules, reactions_enabled: v })}
+              />
+
+              {status && <p className="mt-4 text-sm text-[#9aa7b4]">{status}</p>}
+
+              {isAdmin ? (
+                <button
+                  disabled={busy}
+                  onClick={() => save(rules, 'Правила сохранены')}
+                  className="mt-4 w-full rounded-lg bg-[#58a6ff] py-2.5 font-semibold text-[#0e1116] disabled:opacity-50"
+                >
+                  {busy ? 'Сохраняем…' : 'Сохранить правила'}
+                </button>
+              ) : (
+                <p className="mt-4 text-sm text-[#64727f]">
+                  Правила меняет только админ {words.genitive}.
+                </p>
+              )}
+            </>
           )}
 
           {tab === 'members' && (
@@ -209,7 +336,7 @@ export function GroupSettingsModal({
                     className={input}
                     value={query}
                     onChange={(e) => setQuery(e.target.value)}
-                    placeholder="Добавить участника по юзернейму…"
+                    placeholder={`Добавить ${pluralWord(1, ...words.members)}а по юзернейму…`}
                   />
                   {found.filter((u) => !memberIds.has(u.id)).length > 0 && (
                     <div className="mt-2 overflow-hidden rounded-lg border border-[#2a3340]">
@@ -295,5 +422,67 @@ export function GroupSettingsModal({
         </div>
       </div>
     </div>
+  )
+}
+
+function Section({
+  icon,
+  title,
+  hint,
+  children,
+}: {
+  icon: IconName
+  title: string
+  hint?: string
+  children: React.ReactNode
+}) {
+  return (
+    <div className="mb-5">
+      <div className="mb-2 flex items-center gap-2 text-sm font-medium">
+        <Icon name={icon} size={15} className="text-[#9aa7b4]" />
+        {title}
+      </div>
+      {hint && <p className="mb-2 text-xs text-[#64727f]">{hint}</p>}
+      {children}
+    </div>
+  )
+}
+
+function Toggle({
+  icon,
+  title,
+  hint,
+  checked,
+  disabled,
+  onChange,
+}: {
+  icon: IconName
+  title: string
+  hint: string
+  checked: boolean
+  disabled: boolean
+  onChange: (v: boolean) => void
+}) {
+  return (
+    <button
+      disabled={disabled}
+      onClick={() => onChange(!checked)}
+      className="mb-2 flex w-full items-center gap-3 rounded-xl border border-[#2a3340] px-3 py-2.5 text-left transition hover:bg-[#0e1116] disabled:opacity-60"
+    >
+      <Icon name={icon} size={16} className="shrink-0 text-[#9aa7b4]" />
+      <span className="min-w-0 flex-1">
+        <span className="block text-sm">{title}</span>
+        <span className="block text-xs text-[#64727f]">{hint}</span>
+      </span>
+      <span
+        className={`flex h-5 w-9 shrink-0 items-center rounded-full p-0.5 transition ${
+          checked ? 'bg-[#58a6ff]' : 'bg-[#2a3340]'
+        }`}
+      >
+        <span
+          className={`h-4 w-4 rounded-full bg-white transition ${checked ? 'translate-x-4' : ''}`}
+        />
+      </span>
+    </button>
   )
 }

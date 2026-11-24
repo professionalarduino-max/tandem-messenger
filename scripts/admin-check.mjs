@@ -58,7 +58,8 @@ try {
     'Что пишут',
     'Капсулы времени',
     'Самые активные',
-    'Живые группы',
+    'Премиум-эмодзи',
+    'Живые группы и каналы',
     'Новые пользователи',
   ]) {
     const seen = await page.locator(`text=${block}`).first().isVisible().catch(() => false)
@@ -200,15 +201,16 @@ try {
 
   // ===== закрепить чат у всех (кнопку только проверяем, нажимать нельзя — это видно всем) =====
   await page.goto(BASE, { waitUntil: 'networkidle' })
-  await page.getByRole('button', { name: /^Группы$/ }).click()
-  const catalog = page.locator('aside button')
-  await page.waitForFunction(() => /# /.test(document.body.innerText), undefined, { timeout: 15000 })
+  await page.getByRole('button', { name: /^Каталог$/ }).click()
+  const catalog = page.locator('button[title="Открыть группу"], button[title="Открыть канал"]')
+  await catalog.first().waitFor({ timeout: 15000 })
+  ok('каталог отдаёт группы и каналы', `${await catalog.count()} строк`)
   let opened = ''
   for (let i = 0; i < (await catalog.count()); i++) {
-    const label = (await catalog.nth(i).innerText()).split('\n')[0].trim()
-    if (!label.startsWith('#') || label.includes('Общий чат')) continue
+    const label = (await catalog.nth(i).innerText()).replace(/\s+/g, ' ').trim()
+    if (label.includes('Общий чат')) continue
     await catalog.nth(i).click()
-    opened = label
+    opened = label.split(' · ')[0].slice(0, 40)
     break
   }
   await page.waitForSelector('textarea', { timeout: 15000 })
@@ -219,6 +221,78 @@ try {
     .catch(() => false))
     ? ok('главный админ закрепляет чат у всех', opened)
     : fail('кнопка «Закрепить у всех»', opened)
+
+  // ===== боковая панель по кнопке «три линии» =====
+  await page.goto(BASE, { waitUntil: 'networkidle' })
+  await page.locator('button[title="Меню"]').first().click()
+  const drawer = page.locator('div[class*="z-[70]"]')
+  await drawer.waitFor({ timeout: 10000 })
+  const drawerItems = ['Новая группа', 'Новый канал', 'Чаты', 'Группы и каналы', 'Люди', 'Настройки', 'Выйти']
+  const noItem = []
+  for (const name of drawerItems) {
+    // у «Чатов» рядом может висеть счётчик непрочитанного, поэтому сверяем начало названия
+    const seen = await drawer
+      .getByRole('button', { name: new RegExp(`^${name}`) })
+      .first()
+      .isVisible()
+      .catch(() => false)
+    if (!seen) noItem.push(name)
+  }
+  noItem.length === 0 ? ok('в панели всё как в телеграме', drawerItems.length + ' пунктов') : fail('нет пунктов', noItem.join(', '))
+  ;(await drawer.getByRole('button', { name: /^Админ-панель/ }).isVisible().catch(() => false))
+    ? ok('главному админу видна админ-панель в меню')
+    : fail('админ-панель в меню')
+
+  // ===== создание канала =====
+  await drawer.getByRole('button', { name: /^Новый канал/ }).click()
+  await page.getByRole('heading', { name: 'Новый канал' }).waitFor({ timeout: 10000 })
+  const bothTypes =
+    (await page.getByRole('button', { name: 'Группа', exact: true }).isVisible().catch(() => false)) &&
+    (await page.getByRole('button', { name: 'Канал', exact: true }).isVisible().catch(() => false))
+  bothTypes ? ok('в окне создания есть и группа, и канал') : fail('переключатель типа')
+  await page.getByRole('button', { name: 'Группа', exact: true }).click()
+  ;(await page.getByRole('heading', { name: 'Новая группа' }).isVisible().catch(() => false))
+    ? ok('переключатель меняет заголовок окна')
+    : fail('заголовок окна')
+  await page.getByRole('button', { name: 'Отмена', exact: true }).click()
+
+  // ===== расширенные настройки группы =====
+  await page.goto(BASE, { waitUntil: 'networkidle' })
+  await page.waitForTimeout(800)
+  await page.locator('a[href*="/c/"]').first().click()
+  await page.waitForSelector('textarea', { timeout: 15000 })
+  await page.locator('button[title="Настройки группы"]').first().click()
+  await page.getByRole('button', { name: /^Правила$/ }).click()
+  const rules = ['Кто может писать', 'Медленный режим', 'Показывать в каталоге', 'История видна всем', 'Реакции']
+  const noRule = []
+  for (const r of rules) {
+    const seen = await page.getByText(r, { exact: true }).first().isVisible().catch(() => false)
+    if (!seen) noRule.push(r)
+  }
+  noRule.length === 0 ? ok('настройки группы на месте', rules.length + ' переключателей') : fail('нет настроек', noRule.join(', '))
+  await page.locator('button[title="Закрыть"]').last().click()
+
+  // ===== эмодзи из поля ввода =====
+  await page.locator('button[title="Эмодзи"]').first().click()
+  const emojiSearch = page.locator('input[placeholder^="Поиск среди"]')
+  await emojiSearch.waitFor({ timeout: 10000 })
+  const totalHint = (await emojiSearch.getAttribute('placeholder')) ?? ''
+  ;/\d{4}/.test(totalHint) ? ok('палитра со всеми эмодзи', totalHint) : fail('счётчик эмодзи', totalHint)
+  // статус премиума приезжает отдельным запросом — полке нужно мгновение
+  const shelf = page.getByText(/Премиум открыт/).first()
+  await shelf.waitFor({ timeout: 10000 }).catch(() => {})
+  ;(await shelf.isVisible().catch(() => false))
+    ? ok('полка премиум-эмодзи открыта главному админу', (await shelf.innerText()).slice(0, 48))
+    : fail('премиум-полка')
+  await emojiSearch.fill('улыб')
+  const emojiGrid = page.locator('div.grid.grid-cols-8 button')
+  await emojiGrid.first().waitFor({ timeout: 10000 })
+  ok('поиск по русским названиям работает', `${await emojiGrid.count()} символов`)
+  await emojiGrid.first().click()
+  const withEmoji = await page.locator('textarea').last().inputValue()
+  withEmoji.length > 0 ? ok('эмодзи попадает в поле ввода', withEmoji) : fail('вставка эмодзи')
+  await page.locator('textarea').last().fill('')
+  await page.keyboard.press('Escape')
 
   // ===== сводка модерации в админке =====
   await page.goto(`${BASE}/admin`, { waitUntil: 'networkidle' })

@@ -5,6 +5,7 @@ import { useProfileCard } from '../hooks/useProfileCard'
 import { Avatar, AdminBadge } from '../components/Avatar'
 import { CapsuleBubble } from '../components/CapsuleBubble'
 import { CapsuleModal } from '../components/CapsuleModal'
+import { EmojiPicker } from '../components/EmojiPicker'
 import { GroupSettingsModal } from '../components/GroupSettingsModal'
 import { Icon, type IconName } from '../components/Icon'
 import { Lightbox } from '../components/Lightbox'
@@ -34,6 +35,7 @@ import {
   subscribeToTyping,
 } from '../lib/api/realtime'
 import { muteActive, pinConversationForAll } from '../lib/api/moderation'
+import { chatWords, isChannel, isPublicChat } from '../lib/chat'
 import { humanSize, isImage } from '../lib/image'
 import { durationLabel, VoiceRecorder, voiceSupported } from '../lib/voice'
 import { dayLabel, lastSeenLabel, plural, timeShort, untilLabel } from '../lib/format'
@@ -61,6 +63,7 @@ export default function ChatView() {
   const [lightbox, setLightbox] = useState<{ url: string; name: string | null } | null>(null)
   const [settings, setSettings] = useState(false)
   const [capsule, setCapsule] = useState(false)
+  const [emojiOpen, setEmojiOpen] = useState(false)
   const [caret, setCaret] = useState(0)
   const [searchOpen, setSearchOpen] = useState(false)
   const [searchQuery, setSearchQuery] = useState('')
@@ -90,11 +93,18 @@ export default function ChatView() {
   const muted = !banned && muteActive(moderation)
   const myMembership = members.find((m) => m.user_id === me)
   const isAdmin = Boolean(profile?.is_super_admin || myMembership?.role === 'admin')
-  const canPin = conv?.type === 'group' ? isAdmin : Boolean(myMembership)
+  // группа и канал устроены одинаково, разница только в том, кому разрешено писать
+  const publicChat = isPublicChat(conv?.type)
+  const channel = isChannel(conv?.type)
+  const words = chatWords(conv?.type)
+  const canPin = publicChat ? isAdmin : Boolean(myMembership)
+  // в канале (и в группе «только админы») остальные читают и ставят реакции
+  const readOnly = publicChat && conv?.posting === 'admins' && !isAdmin
+  const canReact = conv?.reactions_enabled !== false && !banned && !muted
   const peer = conv?.type === 'direct' ? members.find((m) => m.user_id !== me) : undefined
   const title =
-    conv?.type === 'group' ? conv.title : (peer?.profile.display_name ?? peer?.profile.username ?? 'Чат')
-  const avatarUrl = conv?.type === 'group' ? conv.avatar_url : (peer?.profile.avatar_url ?? null)
+    publicChat ? conv!.title : (peer?.profile.display_name ?? peer?.profile.username ?? 'Чат')
+  const avatarUrl = publicChat ? conv!.avatar_url : (peer?.profile.avatar_url ?? null)
 
   // превью выбранной картинки: ссылка создаётся один раз и освобождается при смене файла
   const filePreview = useObjectUrl(file && isImage(file.type) ? file : null)
@@ -117,6 +127,7 @@ export default function ChatView() {
     setSendError(null)
     setSettings(false)
     setCapsule(false)
+    setEmojiOpen(false)
     setReplyTo(null)
     setEditing(null)
     setFile(null)
@@ -337,6 +348,21 @@ export default function ChatView() {
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
     }
+  }
+
+  /** Вставляет эмодзи туда, где стоит курсор, и возвращает фокус в поле. */
+  function insertEmoji(char: string) {
+    const el = input.current
+    const start = el?.selectionStart ?? caret
+    const end = el?.selectionEnd ?? start
+    const next = `${text.slice(0, start)}${char}${text.slice(end)}`
+    const pos = start + char.length
+    setText(next)
+    setCaret(pos)
+    requestAnimationFrame(() => {
+      el?.focus()
+      el?.setSelectionRange(pos, pos)
+    })
   }
 
   /** Подставляет выбранный юзернейм вместо набранного «@…». */
@@ -591,25 +617,25 @@ export default function ChatView() {
           <Icon name="back" size={20} />
         </button>
         <button
-          onClick={() => (conv.type === 'group' ? setSettings(true) : peer && openProfile(peer.user_id))}
-          title={conv.type === 'group' ? 'Настройки группы' : 'Открыть профиль'}
+          onClick={() => (publicChat ? setSettings(true) : peer && openProfile(peer.user_id))}
+          title={publicChat ? `Настройки ${words.genitive}` : 'Открыть профиль'}
           className="shrink-0"
         >
-          <Avatar
-            name={title}
-            seed={conv.id}
-            url={avatarUrl}
-            size={38}
-            square={conv.type === 'group'}
-          />
+          <Avatar name={title} seed={conv.id} url={avatarUrl} size={38} square={publicChat} />
         </button>
         <button
-          onClick={() => (conv.type === 'group' ? setSettings(true) : peer && openProfile(peer.user_id))}
+          onClick={() => (publicChat ? setSettings(true) : peer && openProfile(peer.user_id))}
           className="min-w-0 flex-1 text-left"
-          title={conv.type === 'group' ? 'Настройки группы' : 'Открыть профиль'}
+          title={publicChat ? `Настройки ${words.genitive}` : 'Открыть профиль'}
         >
           <div className="flex items-center gap-1.5 truncate font-semibold">
-            {conv.type === 'group' ? '# ' : ''}
+            {channel ? (
+              <Icon name="megaphone" size={14} title="Канал" className="shrink-0 text-[#9aa7b4]" />
+            ) : conv.type === 'group' ? (
+              '# '
+            ) : (
+              ''
+            )}
             {title}
             {conv.is_home && <Icon name="pin" size={13} title="Главный чат" className="text-[#d29922]" />}
             {!conv.is_home && conv.pinned_at && (
@@ -621,8 +647,8 @@ export default function ChatView() {
               <span className="text-[#58a6ff]">
                 {typing.length === 1 ? `${typing[0]} печатает…` : `печатают: ${typing.join(', ')}`}
               </span>
-            ) : conv.type === 'group' ? (
-              plural(members.length, 'участник', 'участника', 'участников')
+            ) : publicChat ? (
+              plural(members.length, ...words.members)
             ) : (
               lastSeenLabel(peer?.profile.last_seen_at ?? null)
             )}
@@ -639,15 +665,15 @@ export default function ChatView() {
           <Icon name="search" size={18} />
         </button>
 
-        {conv.type === 'group' && !myMembership && (
+        {publicChat && !myMembership && (
           <button
             onClick={onJoin}
             className="rounded-lg bg-[#58a6ff] px-3 py-1.5 text-sm font-semibold text-[#0e1116]"
           >
-            Вступить
+            {words.join}
           </button>
         )}
-        {profile?.is_super_admin && conv.type === 'group' && !conv.is_home && (
+        {profile?.is_super_admin && publicChat && !conv.is_home && (
           <button
             onClick={pinForAll}
             className={`rounded-lg px-2 py-1.5 transition hover:bg-[#1c2430] ${
@@ -658,11 +684,11 @@ export default function ChatView() {
             <Icon name="pin" size={18} />
           </button>
         )}
-        {conv.type === 'group' && (
+        {publicChat && (
           <button
             onClick={() => setSettings(true)}
             className="rounded-lg px-2 py-1.5 text-[#9aa7b4] transition hover:bg-[#1c2430] hover:text-white"
-            title="Настройки группы"
+            title={`Настройки ${words.genitive}`}
           >
             <Icon name="settings" size={18} />
           </button>
@@ -781,7 +807,7 @@ export default function ChatView() {
                 {/* кнопки действий */}
                 {mine && !m.deleted_at && !m.pending && (
                   <div className="flex items-center gap-1 self-center opacity-0 transition group-hover:opacity-100">
-                    <ReactionPicker onPick={(emoji) => onToggleReaction(m.id, emoji)} />
+                    {canReact && <ReactionPicker onPick={(emoji) => onToggleReaction(m.id, emoji)} />}
                     <IconBtn icon="reply" title="Ответить" onClick={() => setReplyTo(m)} />
                     {canPin && (
                       <IconBtn
@@ -814,7 +840,7 @@ export default function ChatView() {
                       : ''
                   }`}
                 >
-                  {!mine && conv.type === 'group' && (
+                  {!mine && publicChat && (
                     <button
                       onClick={() => m.sender_id && openProfile(m.sender_id)}
                       className="mb-0.5 flex items-center gap-1.5 text-xs font-semibold text-[#58a6ff] hover:underline"
@@ -926,7 +952,7 @@ export default function ChatView() {
                 {/* действия для чужих сообщений */}
                 {!mine && !m.deleted_at && !m.pending && (
                   <div className="flex items-center gap-1 self-center opacity-0 transition group-hover:opacity-100">
-                    <ReactionPicker onPick={(emoji) => onToggleReaction(m.id, emoji)} />
+                    {canReact && <ReactionPicker onPick={(emoji) => onToggleReaction(m.id, emoji)} />}
                     <IconBtn icon="reply" title="Ответить" onClick={() => setReplyTo(m)} />
                     {canPin && (
                       <IconBtn
@@ -995,6 +1021,15 @@ export default function ChatView() {
               {moderation?.ban_reason ? `. Причина: ${moderation.ban_reason}` : ''}
             </span>
           </div>
+        ) : readOnly ? (
+          <div className="flex items-center gap-2 rounded-xl border border-[#2a3340] bg-[#161b22] px-3 py-3 text-sm text-[#9aa7b4]">
+            <Icon name="lock" size={17} className="shrink-0" />
+            <span>
+              {channel
+                ? 'В канале пишут только админы — вам остаётся читать и ставить реакции.'
+                : 'В этой группе писать могут только админы.'}
+            </span>
+          </div>
         ) : recording ? (
           <div className="flex items-center gap-3 rounded-xl border border-red-500/40 bg-[#161b22] px-3 py-2.5">
             <span className="h-2.5 w-2.5 animate-pulse rounded-full bg-red-500" />
@@ -1024,6 +1059,12 @@ export default function ChatView() {
               {moderation?.mute_reason ? ` · ${moderation.mute_reason}` : ''}
             </div>
           )}
+          {!muted && conv.slow_mode_seconds > 0 && !isAdmin && (
+            <div className="absolute right-0 bottom-full mb-2 flex items-center gap-1.5 rounded-lg border border-[#2a3340] bg-[#161b22] px-2.5 py-1 text-xs text-[#9aa7b4]">
+              <Icon name="gauge" size={13} />
+              медленный режим · {slowLabel(conv.slow_mode_seconds)} между сообщениями
+            </div>
+          )}
           <input
             ref={fileInput}
             type="file"
@@ -1049,6 +1090,23 @@ export default function ChatView() {
           >
             <Icon name="hourglass" size={20} />
           </button>
+          <div className="relative shrink-0">
+            <button
+              type="button"
+              onClick={() => setEmojiOpen((v) => !v)}
+              title="Эмодзи"
+              className={`flex h-full items-center justify-center rounded-xl border px-3 transition ${
+                emojiOpen
+                  ? 'border-[#58a6ff] text-white'
+                  : 'border-[#2a3340] text-[#9aa7b4] hover:text-white'
+              }`}
+            >
+              <Icon name="smile" size={20} />
+            </button>
+            {emojiOpen && (
+              <EmojiPicker onPick={insertEmoji} onClose={() => setEmojiOpen(false)} />
+            )}
+          </div>
           <MentionBox
             conversationId={conv.id}
             text={text}
@@ -1132,7 +1190,7 @@ export default function ChatView() {
 
       {capsule && <CapsuleModal onClose={() => setCapsule(false)} onSend={sendTimeCapsule} />}
 
-      {settings && conv.type === 'group' && me && (
+      {settings && publicChat && me && (
         <GroupSettingsModal
           conversation={conv}
           members={members}
@@ -1153,6 +1211,13 @@ export default function ChatView() {
       )}
     </div>
   )
+}
+
+/** «30 секунд», «5 минут», «1 час» — для подсказки о медленном режиме. */
+function slowLabel(seconds: number) {
+  if (seconds < 60) return plural(seconds, 'секунда', 'секунды', 'секунд')
+  if (seconds < 3600) return plural(Math.round(seconds / 60), 'минута', 'минуты', 'минут')
+  return plural(Math.round(seconds / 3600), 'час', 'часа', 'часов')
 }
 
 type QuoteLike = Pick<MessageQuote, 'body' | 'attachment_name' | 'kind' | 'deleted_at'>

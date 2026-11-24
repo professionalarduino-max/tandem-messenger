@@ -8,8 +8,10 @@ const SERVICE = process.env.SUPABASE_SERVICE_KEY
 if (!SERVICE) throw new Error('Нужна переменная окружения SUPABASE_SERVICE_KEY')
 
 let failures = 0
+let total = 0
 function check(name, ok, extra = '') {
   console.log(`${ok ? '  OK  ' : ' FAIL '} ${name}${extra ? ' — ' + extra : ''}`)
+  total++
   if (!ok) failures++
 }
 
@@ -709,6 +711,210 @@ const run = async () => {
   const unpinHome = await tryRpc(admin.token, 'admin_pin_conversation', { conv_in: homeId, pinned: false })
   check('главный чат открепить нельзя', !unpinHome.ok, `статус ${unpinHome.status}`)
 
+  // ===== каналы =====
+  console.log('\n— Каналы —')
+  const guestEmail = `guest.${Date.now()}@example.com`
+  await ensureUser(guestEmail, 'GuestPass123', 'Guest')
+  const guest = await signIn(guestEmail, 'GuestPass123')
+
+  const chId = await rpc(friend.token, 'create_conversation', {
+    title_in: 'Канал друга',
+    description_in: 'пишут только админы',
+    type_in: 'channel',
+  })
+  check('друг создал канал', Boolean(chId))
+
+  const chRow = (
+    await get(
+      admin.token,
+      `conversations?select=type,posting,listed,history_visible,reactions_enabled,slow_mode_seconds&id=eq.${chId}`,
+    )
+  )[0]
+  check('канал сохранён с типом channel', chRow?.type === 'channel')
+  check('в канале сразу «только админы»', chRow?.posting === 'admins')
+  check('настройки по умолчанию включены', chRow?.listed && chRow?.history_visible && chRow?.reactions_enabled)
+
+  const chCatalog = await rpc(guest.token, 'list_public_groups', { q: '' })
+  const chCard = chCatalog.find((g) => g.id === chId)
+  check('канал виден в общем каталоге', Boolean(chCard), `тип: ${chCard?.type}`)
+
+  const ownerPost = await post(friend.token, 'messages', {
+    conversation_id: chId,
+    sender_id: friend.id,
+    body: 'первый пост канала',
+    client_id: crypto.randomUUID(),
+  })
+  check('админ канала пишет', ownerPost.ok, ownerPost.ok ? '' : ownerPost.body.slice(0, 120))
+
+  const nosyChannelPost = await post(nosy.token, 'messages', {
+    conversation_id: chId,
+    sender_id: nosy.id,
+    body: 'а можно мне?',
+    client_id: crypto.randomUUID(),
+  })
+  check('посторонний в канал не пишет', !nosyChannelPost.ok, `статус ${nosyChannelPost.status}`)
+
+  await rpc(guest.token, 'join_group', { conv_in: chId })
+  const subs = await get(
+    admin.token,
+    `conversation_members?select=user_id,role&conversation_id=eq.${chId}&user_id=eq.${guest.id}`,
+  )
+  check('на канал можно подписаться', subs.length === 1, `роль: ${subs[0]?.role}`)
+
+  const subPost = await post(guest.token, 'messages', {
+    conversation_id: chId,
+    sender_id: guest.id,
+    body: 'я подписчик',
+    client_id: crypto.randomUUID(),
+  })
+  check('подписчик канала тоже молчит', !subPost.ok, `статус ${subPost.status}`)
+
+  const chMsgId = JSON.parse(ownerPost.body)[0].id
+  const subReaction = await tryRpc(guest.token, 'toggle_reaction', { msg_in: chMsgId, emoji_in: '🔥' })
+  check('но реакцию подписчик поставить может', subReaction.ok, `статус ${subReaction.status}`)
+
+  const retype = await patch(friend.token, `conversations?id=eq.${chId}`, { type: 'group' })
+  check('тип чата переделать нельзя', !retype.ok || retype.rows.length === 0, `статус ${retype.status}`)
+
+  // ===== настройки групп =====
+  console.log('\n— Настройки группы —')
+  const onlyAdmins = await patch(friend.token, `conversations?id=eq.${gid}`, { posting: 'admins' })
+  check('админ включает «писать только админам»', onlyAdmins.rows[0]?.posting === 'admins')
+  const nosyWhenLocked = await post(nosy.token, 'messages', {
+    conversation_id: gid,
+    sender_id: nosy.id,
+    body: 'а я всё равно напишу',
+    client_id: crypto.randomUUID(),
+  })
+  check('…и остальные замолкают', !nosyWhenLocked.ok, `статус ${nosyWhenLocked.status}`)
+  await patch(friend.token, `conversations?id=eq.${gid}`, { posting: 'all' })
+
+  await patch(friend.token, `conversations?id=eq.${gid}`, { slow_mode_seconds: 30 })
+  const slow1 = await post(nosy.token, 'messages', {
+    conversation_id: gid,
+    sender_id: nosy.id,
+    body: 'раз',
+    client_id: crypto.randomUUID(),
+  })
+  const slow2 = await post(nosy.token, 'messages', {
+    conversation_id: gid,
+    sender_id: nosy.id,
+    body: 'два подряд',
+    client_id: crypto.randomUUID(),
+  })
+  check('медленный режим держит паузу', slow1.ok && !slow2.ok, `статусы ${slow1.status}/${slow2.status}`)
+  const slowAdmin1 = await post(friend.token, 'messages', {
+    conversation_id: gid,
+    sender_id: friend.id,
+    body: 'админ раз',
+    client_id: crypto.randomUUID(),
+  })
+  const slowAdmin2 = await post(friend.token, 'messages', {
+    conversation_id: gid,
+    sender_id: friend.id,
+    body: 'админ два',
+    client_id: crypto.randomUUID(),
+  })
+  check('админа медленный режим не трогает', slowAdmin1.ok && slowAdmin2.ok)
+  await patch(friend.token, `conversations?id=eq.${gid}`, { slow_mode_seconds: 0 })
+
+  await patch(friend.token, `conversations?id=eq.${gid}`, { listed: false })
+  const hiddenCatalog = await rpc(guest.token, 'list_public_groups', { q: '' })
+  check('скрытая группа пропадает из каталога', !hiddenCatalog.some((g) => g.id === gid))
+  const ownerCatalog = await rpc(friend.token, 'list_public_groups', { q: '' })
+  check('…но своим видна', ownerCatalog.some((g) => g.id === gid))
+  await patch(friend.token, `conversations?id=eq.${gid}`, { listed: true })
+
+  await patch(friend.token, `conversations?id=eq.${gid}`, { history_visible: false })
+  const closedHistory = await get(guest.token, `messages?select=id&conversation_id=eq.${gid}`)
+  check('закрытая история не видна чужим', closedHistory.length === 0)
+  await patch(friend.token, `conversations?id=eq.${gid}`, { history_visible: true })
+  const openHistory = await get(guest.token, `messages?select=id&conversation_id=eq.${gid}`)
+  check('…и возвращается обратно', openHistory.length > 0, `сообщений: ${openHistory.length}`)
+
+  await patch(friend.token, `conversations?id=eq.${gid}`, { reactions_enabled: false })
+  const reactOff = await tryRpc(nosy.token, 'toggle_reaction', { msg_in: parentId, emoji_in: '👏' })
+  check('реакции можно выключить', !reactOff.ok, `статус ${reactOff.status}`)
+  await patch(friend.token, `conversations?id=eq.${gid}`, { reactions_enabled: true })
+
+  const rulesByStranger = await patch(nosy.token, `conversations?id=eq.${gid}`, { slow_mode_seconds: 600 })
+  check('правила меняет только админ', rulesByStranger.rows.length === 0, `статус ${rulesByStranger.status}`)
+
+  const sneakyPin = await patch(friend.token, `conversations?id=eq.${gid}`, {
+    pinned_at: new Date().toISOString(),
+  })
+  check('админ группы не закрепит чат у всех руками', !sneakyPin.ok, `статус ${sneakyPin.status}`)
+
+  // ===== премиум-эмодзи =====
+  console.log('\n— Премиум-эмодзи —')
+  const packs = await get(guest.token, 'premium_emoji?select=emoji,pack')
+  check('наборы премиум-эмодзи видны вошедшему', packs.length >= 36, `эмодзи: ${packs.length}`)
+  const anonPacks = await fetch(`${URL}/rest/v1/premium_emoji?select=emoji`, {
+    headers: { apikey: ANON, 'Content-Type': 'application/json' },
+  })
+  const anonPacksRows = await anonPacks.json().catch(() => [])
+  check('без входа наборы закрыты', !Array.isArray(anonPacksRows) || anonPacksRows.length === 0)
+
+  const friendPremium = await rpc(friend.token, 'premium_status')
+  check('у админа группы премиум открыт', friendPremium.allowed === true)
+  check('в статусе четыре набора', friendPremium.packs?.length === 4, `наборы: ${friendPremium.packs?.length}`)
+  check('окно активности — 14 дней', friendPremium.window_days === 14)
+
+  const guestPremium = await rpc(guest.token, 'premium_status')
+  check('у молчуна премиума нет', guestPremium.allowed === false, `сообщений за 14 дней: ${guestPremium.messages_14d}`)
+
+  const guestCrown = await post(guest.token, 'messages', {
+    conversation_id: gid,
+    sender_id: guest.id,
+    body: 'я тут главный 👑',
+    client_id: crypto.randomUUID(),
+  })
+  check('премиум-эмодзи молчуну не отправить', !guestCrown.ok, `статус ${guestCrown.status}`)
+
+  const guestCrownReaction = await tryRpc(guest.token, 'toggle_reaction', { msg_in: parentId, emoji_in: '👑' })
+  check('и в реакции тоже', !guestCrownReaction.ok, `статус ${guestCrownReaction.status}`)
+
+  const guestPlain = await post(guest.token, 'messages', {
+    conversation_id: gid,
+    sender_id: guest.id,
+    body: 'зато обычные можно 😀',
+    client_id: crypto.randomUUID(),
+  })
+  check('обычные эмодзи доступны всем', guestPlain.ok, guestPlain.ok ? '' : guestPlain.body.slice(0, 120))
+
+  const guestAfter = await rpc(guest.token, 'premium_status')
+  check('после первого сообщения премиум открывается', guestAfter.allowed === true, `сообщений: ${guestAfter.messages_14d}`)
+
+  const guestCrown2 = await post(guest.token, 'messages', {
+    conversation_id: gid,
+    sender_id: guest.id,
+    body: 'теперь можно 👑',
+    client_id: crypto.randomUUID(),
+  })
+  check('…и премиум-эмодзи проходят', guestCrown2.ok, guestCrown2.ok ? '' : guestCrown2.body.slice(0, 120))
+
+  // отматываем сообщения гостя на 20 дней назад — так проверяется само окно активности
+  await fetch(`${URL}/rest/v1/messages?sender_id=eq.${guest.id}`, {
+    method: 'PATCH',
+    headers: SERVICE_H,
+    body: JSON.stringify({ created_at: new Date(Date.now() - 20 * 86400000).toISOString() }),
+  })
+  const staleStatus = await rpc(guest.token, 'premium_status')
+  check(
+    'после 14 дней молчания премиум закрывается',
+    staleStatus.allowed === false,
+    `сообщений за окно: ${staleStatus.messages_14d}`,
+  )
+
+  const guestPlainId = JSON.parse(guestPlain.body)[0].id
+  const plainEdit = await patch(guest.token, `messages?id=eq.${guestPlainId}`, { body: 'просто правка 🙂' })
+  check('обычную правку это не ломает', plainEdit.rows.length === 1, `статус ${plainEdit.status}`)
+
+  const premiumEdit = await patch(guest.token, `messages?id=eq.${guestPlainId}`, {
+    body: 'подправлю на премиум 💎',
+  })
+  check('премиум нельзя протащить правкой', !premiumEdit.ok, `статус ${premiumEdit.status}`)
+
   // ===== анонимный ключ не должен открывать каталог =====
   console.log('\n— Анонимный доступ —')
   for (const [fn, args] of [
@@ -741,15 +947,17 @@ const run = async () => {
     })
   }
 
-  await fetch(`${URL}/rest/v1/conversations?id=in.(${gid},${dm})`, { method: 'DELETE', headers: SH })
-  for (const u of [friend, stranger, nosy, newbie]) {
+  await fetch(`${URL}/rest/v1/conversations?id=in.(${gid},${dm},${chId})`, { method: 'DELETE', headers: SH })
+  for (const u of [friend, stranger, nosy, newbie, guest]) {
     await fetch(`${URL}/auth/v1/admin/users/${u.id}`, { method: 'DELETE', headers: SH })
   }
 
-  const leftovers = await get(admin.token, `conversations?select=id&id=in.(${gid},${dm})`)
-  check('тестовые группы, диалоги, файлы и аккаунты удалены', leftovers.length === 0)
+  const leftovers = await get(admin.token, `conversations?select=id&id=in.(${gid},${dm},${chId})`)
+  check('тестовые группы, каналы, диалоги, файлы и аккаунты удалены', leftovers.length === 0)
 
-  console.log(`\n${failures === 0 ? 'ВСЕ ПРОВЕРКИ ПРОШЛИ' : `ПРОВАЛЕНО ПРОВЕРОК: ${failures}`}`)
+  console.log(
+    `\n${failures === 0 ? `ВСЕ ПРОВЕРКИ ПРОШЛИ — ${total} из ${total}` : `ПРОВАЛЕНО ПРОВЕРОК: ${failures} из ${total}`}`,
+  )
   process.exit(failures === 0 ? 0 : 1)
 }
 

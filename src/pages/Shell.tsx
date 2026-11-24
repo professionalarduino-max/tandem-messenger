@@ -4,7 +4,8 @@ import { useAuth } from '../hooks/useAuth'
 import { useProfileCard } from '../hooks/useProfileCard'
 import { Avatar, AdminBadge } from '../components/Avatar'
 import { mentionsUser } from '../components/MessageText'
-import { NewGroupModal } from '../components/NewGroupModal'
+import { NewChatModal } from '../components/NewChatModal'
+import { Drawer } from '../components/Drawer'
 import {
   createDirect,
   joinGroup,
@@ -14,6 +15,7 @@ import {
 import { listUsers } from '../lib/api/profiles'
 import { READ_EVENT } from '../lib/api/messages'
 import { subscribeToDirectory, subscribeToInbox, type InboxEvent } from '../lib/api/realtime'
+import { isChannel, isPublicChat, chatWords } from '../lib/chat'
 import { listTime, plural, isOnline, lastSeenLabel } from '../lib/format'
 import { setTitleBadge, showMessageNotification } from '../lib/notify'
 import { Icon, type IconName } from '../components/Icon'
@@ -34,7 +36,8 @@ export default function Shell() {
   const [chats, setChats] = useState<ConversationPreview[]>([])
   const [groups, setGroups] = useState<PublicGroup[]>([])
   const [people, setPeople] = useState<DirectoryUser[]>([])
-  const [modal, setModal] = useState(false)
+  const [modal, setModal] = useState<'group' | 'channel' | null>(null)
+  const [drawer, setDrawer] = useState(false)
   const tabRef = useRef(tab)
   const queryRef = useRef(query)
   const chatsRef = useRef<ConversationPreview[]>([])
@@ -196,7 +199,14 @@ export default function Shell() {
           openId || fullScreen ? 'hidden md:flex' : 'flex'
         }`}
       >
-        <header className="flex items-center gap-3 border-b border-[#2a3340] px-4 py-3">
+        <header className="flex items-center gap-2 border-b border-[#2a3340] px-3 py-3">
+          <button
+            onClick={() => setDrawer(true)}
+            title="Меню"
+            className="shrink-0 rounded-lg px-2 py-2 text-[#9aa7b4] transition hover:bg-[#1c2430] hover:text-white"
+          >
+            <Icon name="menu" size={20} />
+          </button>
           <button
             onClick={() => profile && openProfile(profile.id)}
             title="Мой профиль"
@@ -216,18 +226,9 @@ export default function Shell() {
             </div>
             <div className="truncate text-xs text-[#64727f]">@{profile?.username}</div>
           </div>
-          {profile?.is_super_admin && (
-            <Link
-              to="/admin"
-              className="rounded-lg px-2 py-1.5 text-[#d29922] transition hover:bg-[#1c2430]"
-              title="Админ-панель"
-            >
-              <Icon name="stats" size={19} />
-            </Link>
-          )}
           <Link
             to="/settings"
-            className="rounded-lg px-2 py-1.5 text-[#9aa7b4] transition hover:bg-[#1c2430] hover:text-white"
+            className="shrink-0 rounded-lg px-2 py-1.5 text-[#9aa7b4] transition hover:bg-[#1c2430] hover:text-white"
             title="Настройки"
           >
             <Icon name="settings" size={19} />
@@ -238,7 +239,7 @@ export default function Shell() {
           {(
             [
               ['chats', 'Чаты'],
-              ['groups', 'Группы'],
+              ['groups', 'Каталог'],
               ['people', 'Люди'],
             ] as const
           ).map(([k, label]) => (
@@ -268,15 +269,15 @@ export default function Shell() {
                 tab === 'people'
                   ? 'Найти человека…'
                   : tab === 'groups'
-                    ? 'Найти группу…'
+                    ? 'Найти группу или канал…'
                     : 'Поиск…'
               }
               className="w-full rounded-lg border border-[#2a3340] bg-[#161b22] py-2 pr-3 pl-9 text-sm outline-none placeholder:text-[#64727f] focus:border-[#58a6ff]"
             />
           </div>
           <button
-            onClick={() => setModal(true)}
-            title="Создать группу"
+            onClick={() => setModal('group')}
+            title="Создать группу или канал"
             className="flex shrink-0 items-center justify-center rounded-lg bg-[#58a6ff] px-3 text-[#0e1116] transition hover:bg-[#79b8ff]"
           >
             <Icon name="plus" size={18} className="stroke-[2.4]" />
@@ -286,7 +287,7 @@ export default function Shell() {
         <div className="min-h-0 flex-1 overflow-y-auto px-2 pb-3">
           {tab === 'chats' &&
             (filteredChats.length === 0 ? (
-              <Hint>Пока нет чатов. Загляните во вкладку «Группы» или найдите человека.</Hint>
+              <Hint>Пока нет чатов. Загляните в «Каталог» или найдите человека.</Hint>
             ) : (
               filteredChats.map((c) => (
                 <Link
@@ -297,7 +298,7 @@ export default function Shell() {
                   }`}
                 >
                   <div className="relative">
-                    <Avatar name={c.title} seed={c.id} url={c.avatar_url} square={c.type === 'group'} />
+                    <Avatar name={c.title} seed={c.id} url={c.avatar_url} square={isPublicChat(c.type)} />
                     {c.type === 'direct' && isOnline(c.peer_last_seen) && (
                       <span className="absolute right-0 bottom-0 h-3 w-3 rounded-full border-2 border-[#0e1116] bg-[#3fb950]" />
                     )}
@@ -312,6 +313,14 @@ export default function Shell() {
                           className={`shrink-0 self-center ${
                             c.is_home ? 'text-[#d29922]' : 'text-[#58a6ff]'
                           }`}
+                        />
+                      )}
+                      {isChannel(c.type) && (
+                        <Icon
+                          name="megaphone"
+                          size={13}
+                          title="Канал"
+                          className="shrink-0 self-center text-[#9aa7b4]"
                         />
                       )}
                       <span className="truncate font-medium">
@@ -331,7 +340,9 @@ export default function Shell() {
                         />
                       )}
                       <span className="truncate text-sm text-[#9aa7b4]">
-                        {c.type === 'group' && c.last_message_sender ? `${c.last_message_sender}: ` : ''}
+                        {isPublicChat(c.type) && c.last_message_sender
+                          ? `${c.last_message_sender}: `
+                          : ''}
                         {c.last_message_body ?? 'нет сообщений'}
                       </span>
                       {c.unread_count > 0 && (
@@ -347,30 +358,53 @@ export default function Shell() {
 
           {tab === 'groups' && (
             <>
-              <Hint>Все группы всех пользователей — открытый каталог</Hint>
+              <Hint>Все группы и каналы — открытый каталог</Hint>
               {groups.map((g) => (
                 <button
                   key={g.id}
                   onClick={() => openGroup(g)}
+                  title={isChannel(g.type) ? 'Открыть канал' : 'Открыть группу'}
                   className="flex w-full items-center gap-3 rounded-xl px-2 py-2.5 text-left transition hover:bg-[#161b22]"
                 >
                   <Avatar name={g.title} seed={g.id} url={g.avatar_url} square />
                   <div className="min-w-0 flex-1">
-                    <div className="truncate font-medium"># {g.title}</div>
+                    <div className="flex items-center gap-1.5">
+                      {isChannel(g.type) ? (
+                        <Icon
+                          name="megaphone"
+                          size={13}
+                          title="Канал"
+                          className="shrink-0 text-[#9aa7b4]"
+                        />
+                      ) : (
+                        <span className="text-[#64727f]">#</span>
+                      )}
+                      <span className="truncate font-medium">{g.title}</span>
+                      {!g.listed && (
+                        <Icon
+                          name="lock"
+                          size={12}
+                          title="Скрыт из каталога — виден только участникам"
+                          className="shrink-0 text-[#64727f]"
+                        />
+                      )}
+                    </div>
                     <div className="truncate text-sm text-[#9aa7b4]">
-                      {plural(Number(g.member_count), 'участник', 'участника', 'участников')} ·{' '}
+                      {plural(Number(g.member_count), ...chatWords(g.type).members)} ·{' '}
                       {plural(Number(g.message_count), 'сообщение', 'сообщения', 'сообщений')}
                       {g.creator_username ? ` · @${g.creator_username}` : ''}
                     </div>
                   </div>
                   {!g.i_am_member && (
                     <span className="shrink-0 rounded-lg border border-[#58a6ff]/40 px-2 py-1 text-xs text-[#58a6ff]">
-                      войти
+                      {isChannel(g.type) ? 'подписаться' : 'войти'}
                     </span>
                   )}
                 </button>
               ))}
-              {groups.length === 0 && <Hint>Групп пока нет. Создайте первую кнопкой «+».</Hint>}
+              {groups.length === 0 && (
+                <Hint>Пока пусто. Создайте группу или канал кнопкой «+».</Hint>
+              )}
             </>
           )}
 
@@ -445,11 +479,23 @@ export default function Shell() {
         <Outlet />
       </main>
 
+      {drawer && (
+        <Drawer
+          tab={tab}
+          unread={chats.reduce((n, c) => n + c.unread_count, 0)}
+          onClose={() => setDrawer(false)}
+          onTab={setTab}
+          onNewGroup={() => setModal('group')}
+          onNewChannel={() => setModal('channel')}
+        />
+      )}
+
       {modal && (
-        <NewGroupModal
-          onClose={() => setModal(false)}
+        <NewChatModal
+          initialType={modal}
+          onClose={() => setModal(null)}
           onCreated={(id) => {
-            setModal(false)
+            setModal(null)
             refresh()
             nav(`/c/${id}`)
           }}
