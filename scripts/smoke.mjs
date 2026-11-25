@@ -55,6 +55,23 @@ async function tryRpc(token, fn, args = {}) {
   return { ok: r.ok, status: r.status, body: text, data: text ? JSON.parse(text) : null }
 }
 
+/** Вызов от имени бота: публичный ключ и токен в теле — ровно как из расширения. */
+async function botRpc(fn, args = {}) {
+  const r = await fetch(`${URL}/rest/v1/rpc/${fn}`, {
+    method: 'POST',
+    headers: { apikey: ANON, Authorization: `Bearer ${ANON}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify(args),
+  })
+  const text = await r.text()
+  let data = null
+  try {
+    data = text ? JSON.parse(text) : null
+  } catch {
+    data = null
+  }
+  return { ok: r.ok, status: r.status, body: text, data }
+}
+
 async function get(token, path) {
   const r = await fetch(`${URL}/rest/v1/${path}`, { headers: H(token) })
   const t = await r.text()
@@ -1053,6 +1070,210 @@ const run = async () => {
   const strangerIpTable = await get(stranger.token, 'user_ips?select=ip')
   check('таблица адресов закрыта от обычных пользователей', strangerIpTable.length === 0)
 
+  // ===== боты: хозяин, код проекта, права =====
+  console.log('\n— Боты —')
+  const stamp = Date.now() % 1000000
+  const friendName = (await get(admin.token, `profiles?select=username&id=eq.${friend.id}`))[0]?.username
+
+  const created = await tryRpc(friend.token, 'create_bot', {
+    name_in: 'Смоук-бот',
+    username_in: `Смоук smoke${stamp}!`,
+    description_in: 'проверочный бот на блоках',
+  })
+  check('друг создаёт бота', created.ok, created.ok ? '' : created.body)
+  const bot = created.data ?? {}
+  check('имя чистится до латиницы и получает хвост bot', bot.username === `smoke${stamp}bot`, String(bot.username))
+  check(
+    'токен выдан и выглядит как пароль',
+    typeof bot.token === 'string' && bot.token.startsWith('tdm_') && bot.token.length >= 40,
+    `${String(bot.token).slice(0, 8)}…`,
+  )
+
+  const botProfile = await get(admin.token, `profiles?select=is_bot,display_name&id=eq.${bot.profile_id}`)
+  check('у бота есть профиль с пометкой «бот»', botProfile[0]?.is_bot === true, String(botProfile[0]?.display_name))
+
+  const mine = await rpc(friend.token, 'my_bots')
+  check('бот виден в списке хозяина', mine.some((b) => b.id === bot.id), `ботов: ${mine.length}`)
+
+  const strangerBots = await get(stranger.token, 'bots?select=id,token')
+  check('чужие боты и токены посторонним не видны', strangerBots.length === 0)
+
+  const strangerEdit = await tryRpc(stranger.token, 'update_bot', { bot_in: bot.id, name_in: 'Угнанный' })
+  check('чужого бота не переименовать', !strangerEdit.ok, `статус ${strangerEdit.status}`)
+
+  const strangerRotate = await tryRpc(stranger.token, 'rotate_bot_token', { bot_in: bot.id })
+  check('чужой токен не сменить', !strangerRotate.ok, `статус ${strangerRotate.status}`)
+
+  for (const fn of ['my_bots', 'create_bot']) {
+    const r = await botRpc(fn, { name_in: 'Левый', username_in: `anon${stamp}` })
+    check(`без входа ${fn} закрыт`, !r.ok, `статус ${r.status}`)
+  }
+
+  const codePath = `${bot.id}/project.sb3`
+  const up = await upload(friend.token, 'botcode', codePath, PNG_1PX, 'application/zip')
+  check('хозяин кладёт файл проекта в хранилище', up.ok, up.ok ? '' : up.body)
+
+  const upStranger = await upload(stranger.token, 'botcode', `${bot.id}/hack.sb3`, PNG_1PX, 'application/zip')
+  check('в папку чужого бота посторонний не пишет', !upStranger.ok, `статус ${upStranger.status}`)
+
+  await rpc(friend.token, 'set_bot_code', {
+    bot_in: bot.id,
+    path_in: codePath,
+    name_in: 'project.sb3',
+    kind_in: 'sb3',
+    size_in: PNG_1PX.length,
+  })
+  const withCode = (await rpc(friend.token, 'my_bots')).find((b) => b.id === bot.id)
+  check('код .sb3 прикреплён к боту', withCode?.code?.kind === 'sb3', String(withCode?.code?.name))
+
+  const publicCode = await fetch(`${URL}/storage/v1/object/public/botcode/${codePath}`)
+  check('ссылка на код открывается без входа', publicCode.ok, `статус ${publicCode.status}`)
+
+  // ===== боты: токен-API, на котором держатся блоки расширения =====
+  console.log('\n— Боты: блоки расширения —')
+  const connect = await botRpc('bot_connect', { token_in: bot.token })
+  check('блок «подключиться» работает по публичному ключу', connect.data?.name === 'Смоук-бот', connect.body.slice(0, 80))
+
+  const badToken = await botRpc('bot_me', { token_in: 'tdm_такого-нет' })
+  check('неверный токен отвергается', !badToken.ok, `статус ${badToken.status}`)
+
+  const addToDm = await tryRpc(friend.token, 'add_bot_to_chat', { bot_in: bot.id, conv_in: dm })
+  check('в личный чат бота не добавить', !addToDm.ok, `статус ${addToDm.status}`)
+
+  const added = await tryRpc(friend.token, 'add_bot_to_chat', { bot_in: bot.id, conv_in: gid })
+  check('админ чата добавляет бота в группу', added.ok, added.ok ? '' : added.body)
+
+  const sentByBot = await botRpc('bot_send', {
+    token_in: bot.token,
+    chat_in: 'Группа друга',
+    body_in: 'Привет, я бот на блоках',
+  })
+  check('блок «отправить сообщение» пишет в чат по названию', sentByBot.ok, sentByBot.ok ? '' : sentByBot.body)
+  const botMsgId = sentByBot.data?.id
+
+  const seen = await get(friend.token, `messages?select=body,sender_id&id=eq.${botMsgId}`)
+  check('сообщение бота видно людям в чате', seen[0]?.body === 'Привет, я бот на блоках', String(seen[0]?.body))
+  check('…и отправитель — профиль бота', seen[0]?.sender_id === bot.profile_id)
+
+  const foreign = await botRpc('bot_send', { token_in: bot.token, chat_in: dm, body_in: 'лезу в чужой чат' })
+  check('в чат, где бота нет, он не пишет', !foreign.ok, `статус ${foreign.status}`)
+
+  const botEdited = await botRpc('bot_edit', { token_in: bot.token, msg_in: botMsgId, body_in: 'Привет, я поправился' })
+  check('блок «изменить сообщение» правит свой текст', botEdited.data?.text === 'Привет, я поправился', botEdited.body.slice(0, 80))
+
+  const alienEdit = await botRpc('bot_edit', { token_in: bot.token, msg_in: parentId, body_in: 'правлю чужое' })
+  check('чужие сообщения бот не правит', !alienEdit.ok, `статус ${alienEdit.status}`)
+
+  const dirty = await botRpc('bot_send', { token_in: bot.token, chat_in: gid, body_in: 'бот сказал мудак' })
+  check('антимат ловит бота так же, как человека', dirty.data?.text === 'бот сказал ***', String(dirty.data?.text))
+
+  const ping = await post(friend.token, 'messages', {
+    conversation_id: gid,
+    sender_id: friend.id,
+    body: `эй @${bot.username}, проверка связи`,
+    client_id: crypto.randomUUID(),
+  })
+  const pingId = JSON.parse(ping.body)[0]?.id
+  const updates = await botRpc('bot_updates', { token_in: bot.token })
+  const fresh = (updates.data ?? []).find((m) => m.id === pingId)
+  check('блок «когда написали» получает свежее сообщение', Boolean(fresh), `событий: ${updates.data?.length}`)
+  check('…с текстом и автором', fresh?.text?.includes('проверка связи') && fresh?.from_id === friend.id, String(fresh?.from))
+  check('…и пометкой, что обратились к боту', fresh?.to_me === true)
+  check('свои же сообщения боту не возвращаются', !(updates.data ?? []).some((m) => m.from_id === bot.profile_id))
+
+  const updates2 = await botRpc('bot_updates', { token_in: bot.token })
+  check('одно сообщение не приходит дважды', !(updates2.data ?? []).some((m) => m.id === pingId), `событий: ${updates2.data?.length}`)
+
+  const react = await botRpc('bot_react', { token_in: bot.token, msg_in: pingId, emoji_in: '👍' })
+  check('блок «поставить реакцию» срабатывает', react.data === true, react.body.slice(0, 80))
+  const botReactions = await get(friend.token, `message_reactions?select=emoji,user_id&message_id=eq.${pingId}`)
+  check('…и реакция видна людям', botReactions.some((r) => r.user_id === bot.profile_id && r.emoji === '👍'))
+
+  const history = await botRpc('bot_history', { token_in: bot.token, chat_in: gid, limit_in: 5 })
+  check('блок «история чата» отдаёт последние сообщения', (history.data ?? []).length > 0, `строк: ${history.data?.length}`)
+
+  const members = await botRpc('bot_members', { token_in: bot.token, chat_in: gid })
+  check('блок «кто в чате» перечисляет участников', (members.data ?? []).some((m) => m.id === friend.id), `людей: ${members.data?.length}`)
+  check('…и помечает среди них бота', (members.data ?? []).some((m) => m.id === bot.profile_id && m.is_bot === true))
+
+  const who = await botRpc('bot_user', { token_in: bot.token, who_in: `@${friendName}` })
+  check('блок «узнать о человеке» работает по @имени', who.data?.id === friend.id, String(who.data?.name))
+
+  const dmByBot = await botRpc('bot_send', { token_in: bot.token, chat_in: `@${friendName}`, body_in: 'личное от бота' })
+  check('бот пишет в личку по @имени', dmByBot.ok, dmByBot.ok ? '' : dmByBot.body)
+  const dmSeen = await get(friend.token, `messages?select=body&id=eq.${dmByBot.data?.id}`)
+  check('…и человек это сообщение видит', dmSeen[0]?.body === 'личное от бота', String(dmSeen.length))
+
+  await botRpc('bot_set', { token_in: bot.token, key_in: 'счёт', value_in: '7' })
+  const recall = await botRpc('bot_get', { token_in: bot.token, key_in: 'счёт' })
+  check('блоки памяти «запомнить/вспомнить» хранят значение', recall.data === '7', String(recall.data))
+  const keys = await botRpc('bot_keys', { token_in: bot.token })
+  check('…и перечисляют ключи', (keys.data ?? []).includes('счёт'), String(keys.data))
+  await botRpc('bot_forget', { token_in: bot.token, key_in: 'счёт' })
+  const forgotten = await botRpc('bot_get', { token_in: bot.token, key_in: 'счёт' })
+  check('забытый ключ отдаёт пустоту, а не ошибку', forgotten.data === '', JSON.stringify(forgotten.data))
+  const keysLeft = await botRpc('bot_keys', { token_in: bot.token })
+  check('…и пропадает из списка ключей', (keysLeft.data ?? []).length === 0, String(keysLeft.data))
+
+  await botRpc('bot_note', { token_in: bot.token, text_in: 'всё идёт по плану' })
+  const noted = (await rpc(friend.token, 'my_bots')).find((b) => b.id === bot.id)
+  check('заметка из блока видна хозяину', noted?.note === 'всё идёт по плану', String(noted?.note))
+
+  await botRpc('bot_rename', { token_in: bot.token, name_in: 'Смоук-бот 2', description_in: 'переименовался сам' })
+  const renamed = await botRpc('bot_me', { token_in: bot.token })
+  check('блок «переименоваться» меняет имя', renamed.data?.name === 'Смоук-бот 2', String(renamed.data?.name))
+
+  const removedMsg = await botRpc('bot_delete', { token_in: bot.token, msg_in: botMsgId })
+  check('блок «удалить сообщение» убирает своё', removedMsg.data === true, removedMsg.body.slice(0, 80))
+  const afterDel = await get(friend.token, `messages?select=deleted_at&id=eq.${botMsgId}`)
+  check('…и оно исчезает из переписки', afterDel.length === 0 || Boolean(afterDel[0]?.deleted_at))
+
+  await rpc(friend.token, 'update_bot', { bot_in: bot.id, enabled_in: false })
+  const offSend = await botRpc('bot_send', { token_in: bot.token, chat_in: gid, body_in: 'я выключен' })
+  check('выключенный хозяином бот молчит', !offSend.ok, `статус ${offSend.status}`)
+  await rpc(friend.token, 'update_bot', { bot_in: bot.id, enabled_in: true })
+
+  const oldToken = bot.token
+  const rotated = await rpc(friend.token, 'rotate_bot_token', { bot_in: bot.id })
+  check('смена токена выдаёт новый', typeof rotated?.token === 'string' && rotated.token !== oldToken)
+  const deadToken = await botRpc('bot_me', { token_in: oldToken })
+  check('старый токен сразу перестаёт работать', !deadToken.ok, `статус ${deadToken.status}`)
+  bot.token = rotated.token
+
+  // ===== боты: видны всем, но управляет ими хозяин и главный админ =====
+  console.log('\n— Боты: каталог и присмотр —')
+  const dir = await rpc(stranger.token, 'list_users', { q: `smoke${stamp}` })
+  check('бот находится в каталоге людей', dir.some((u) => u.id === bot.profile_id && u.is_bot === true), `найдено: ${dir.length}`)
+
+  const botCard = await rpc(stranger.token, 'user_card', { uid_in: bot.profile_id })
+  check('в карточке бота стоит пометка', botCard?.is_bot === true)
+  check('…и видно хозяина', botCard?.bot_owner === friendName, String(botCard?.bot_owner))
+
+  const adminList = await rpc(admin.token, 'admin_bots')
+  check('главный админ видит всех ботов', adminList.some((b) => b.id === bot.id), `ботов: ${adminList.length}`)
+  const strangerAdminList = await rpc(stranger.token, 'admin_bots')
+  check('обычному пользователю список ботов закрыт', strangerAdminList.length === 0)
+  const strangerOff = await tryRpc(stranger.token, 'admin_set_bot_enabled', { bot_in: bot.id, value: false })
+  check('чужого бота обычный пользователь не выключит', !strangerOff.ok, `статус ${strangerOff.status}`)
+
+  await rpc(admin.token, 'admin_set_bot_enabled', { bot_in: bot.id, value: false })
+  const offByAdmin = await botRpc('bot_me', { token_in: bot.token })
+  check('главный админ выключает бота — тот замолкает', !offByAdmin.ok, `статус ${offByAdmin.status}`)
+  await rpc(admin.token, 'admin_set_bot_enabled', { bot_in: bot.id, value: true })
+
+  await rpc(friend.token, 'remove_bot_from_chat', { bot_in: bot.id, conv_in: gid })
+  const botAfterRemove = await botRpc('bot_send', { token_in: bot.token, chat_in: gid, body_in: 'я ушёл, но пишу' })
+  check('убранный из чата бот туда больше не пишет', !botAfterRemove.ok, `статус ${botAfterRemove.status}`)
+
+  await rpc(friend.token, 'clear_bot_code', { bot_in: bot.id })
+  await rpc(friend.token, 'delete_bot', { bot_in: bot.id })
+  const botsLeft = await rpc(friend.token, 'my_bots')
+  check('бот удаляется у хозяина', !botsLeft.some((b) => b.id === bot.id), `осталось: ${botsLeft.length}`)
+  const botProfileLeft = await get(admin.token, `profiles?select=id&id=eq.${bot.profile_id}`)
+  check('…вместе со своим профилем', botProfileLeft.length === 0)
+  const deadBotToken = await botRpc('bot_me', { token_in: bot.token })
+  check('…и токен удалённого бота мёртв', !deadBotToken.ok, `статус ${deadBotToken.status}`)
+
   // ===== анонимный ключ не должен открывать каталог =====
   console.log('\n— Анонимный доступ —')
   for (const [fn, args] of [
@@ -1077,6 +1298,7 @@ const run = async () => {
   for (const [bucket, prefixes] of [
     ['attachments', [groupFile, dmFile]],
     ['avatars', [`users/${friend.id}/avatar.webp`, `groups/${gid}/avatar.webp`]],
+    ['botcode', [codePath]],
   ]) {
     await fetch(`${URL}/storage/v1/object/${bucket}`, {
       method: 'DELETE',

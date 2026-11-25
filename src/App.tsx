@@ -7,6 +7,7 @@ import ChatView from './pages/ChatView'
 import Settings from './pages/Settings'
 import Admin from './pages/Admin'
 import Changelog from './pages/Changelog'
+import Bots from './pages/Bots'
 import Invite from './pages/Invite'
 import Empty from './pages/Empty'
 
@@ -37,6 +38,7 @@ export default function App() {
           <Route path="c/:id" element={<ChatView />} />
           <Route path="settings" element={<Settings />} />
           <Route path="news" element={<Changelog />} />
+          <Route path="bots" element={<Bots />} />
           <Route path="admin" element={<Admin />} />
         </Route>
         <Route path="i/:code" element={<Invite />} />

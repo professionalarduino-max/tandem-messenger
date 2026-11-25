@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useAuth } from '../hooks/useAuth'
-import { Avatar, AdminBadge } from './Avatar'
+import { Avatar, AdminBadge, BotBadge } from './Avatar'
 import { Icon, type IconName } from './Icon'
 import { createDirect } from '../lib/api/conversations'
 import { getUserCard, getUserCardByName } from '../lib/api/profiles'
@@ -149,6 +149,7 @@ export function ProfileModal({
                   <div className="flex flex-wrap items-center gap-2 text-lg leading-tight font-semibold">
                     {card.display_name ?? card.username}
                     {card.is_super_admin && <AdminBadge />}
+                    {card.is_bot && <BotBadge title={card.bot_owner ? `Бот, хозяин @${card.bot_owner}` : 'Бот на блоках'} />}
                     {card.is_me && (
                       <span className="rounded border border-[#2a3340] px-1.5 py-0.5 text-[10px] text-[#64727f]">
                         вы

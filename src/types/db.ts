@@ -45,6 +45,8 @@ export interface DirectoryUser {
   avatar_url: string | null
   bio: string | null
   is_super_admin: boolean
+  /** бот, а не человек: пишет через расширение для Scratch */
+  is_bot: boolean
   last_seen_at: string
   created_at: string
   is_me: boolean
@@ -71,6 +73,9 @@ export interface UserCard {
   avatar_url: string | null
   bio: string | null
   is_super_admin: boolean
+  is_bot: boolean
+  /** @имя хозяина бота — только у ботов */
+  bot_owner: string | null
   last_seen_at: string
   created_at: string
   is_me: boolean
@@ -96,6 +101,7 @@ export interface MentionCandidate {
   display_name: string | null
   avatar_url: string | null
   is_member: boolean
+  is_bot: boolean
 }
 
 export type InviteState = 'ok' | 'revoked' | 'expired' | 'used_up'
@@ -432,4 +438,56 @@ export interface Strikes {
   total: number
   last_word: string | null
   last_at: string | null
+}
+
+/** Файл проекта, прикреплённый к боту: .sb3 из TurboWarp или .dbp из DashBlocks. */
+export interface BotCode {
+  path: string
+  name: string
+  kind: 'sb3' | 'dbp'
+  size: number
+  updated_at: string
+}
+
+/** Бот глазами хозяина — с токеном. Чужим его база не отдаёт. */
+export interface Bot {
+  id: string
+  profile_id: string
+  name: string
+  description: string | null
+  username: string
+  avatar_url: string | null
+  token: string
+  engine: 'dashblocks' | 'turbowarp' | 'scratch' | 'other'
+  enabled: boolean
+  created_at: string
+  last_used_at: string | null
+  online: boolean
+  calls_total: number
+  messages_sent: number
+  last_error: string | null
+  /** Что бот написал хозяину блоком «записать заметку». */
+  note: string | null
+  note_at: string | null
+  code: BotCode | null
+  chats: { id: string; title: string | null; type: ConversationType; avatar_url: string | null }[]
+  direct_count: number
+}
+
+/** Строка списка всех ботов в админ-панели. */
+export interface AdminBot {
+  id: string
+  name: string
+  username: string
+  owner: string | null
+  owner_id: string
+  enabled: boolean
+  engine: string
+  code_kind: 'sb3' | 'dbp' | null
+  messages_sent: number
+  calls_total: number
+  last_used_at: string | null
+  created_at: string
+  online: boolean
+  chats: number
 }

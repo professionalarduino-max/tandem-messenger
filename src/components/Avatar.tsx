@@ -61,3 +61,14 @@ export function AdminBadge({ title = 'Главный админ' }: { title?: st
     </span>
   )
 }
+
+export function BotBadge({ title = 'Бот на блоках' }: { title?: string }) {
+  return (
+    <span
+      title={title}
+      className="rounded-md border border-[#58a6ff]/40 bg-[#58a6ff]/15 px-1.5 py-0.5 text-[10px] font-semibold tracking-wide text-[#58a6ff] uppercase"
+    >
+      bot
+    </span>
+  )
+}

@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { Link, Outlet, useLocation, useMatch, useNavigate } from 'react-router-dom'
 import { useAuth } from '../hooks/useAuth'
 import { useProfileCard } from '../hooks/useProfileCard'
-import { Avatar, AdminBadge } from '../components/Avatar'
+import { Avatar, AdminBadge, BotBadge } from '../components/Avatar'
 import { mentionsUser } from '../components/MessageText'
 import { NewChatModal } from '../components/NewChatModal'
 import { Drawer } from '../components/Drawer'
@@ -439,6 +439,7 @@ export default function Shell() {
                     <div className="flex items-center gap-2 truncate font-medium">
                       {u.display_name ?? u.username}
                       {u.is_super_admin && <AdminBadge />}
+                      {u.is_bot && <BotBadge />}
                       {u.banned_at && (
                         <Icon name="ban" size={13} title="Заблокирован" className="text-[#f85149]" />
                       )}

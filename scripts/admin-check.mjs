@@ -61,6 +61,7 @@ try {
     'Премиум-эмодзи',
     'Блокировки по IP',
     'Антимат',
+    'Боты',
     'Живые группы и каналы',
     'Новые пользователи',
   ]) {
@@ -235,6 +236,7 @@ try {
     'Чаты',
     'Группы и каналы',
     'Люди',
+    'Боты',
     'Что нового',
     'Настройки',
     'Выйти',
@@ -323,8 +325,59 @@ try {
   const releases = await page.locator('section[class*="pl-7"]').count()
   releases >= 4 ? ok('лента обновлений на месте', `${releases} выпуска`) : fail('лента обновлений', String(releases))
   const newsText = await page.locator('body').innerText()
-  const noNews = ['свежее', 'Антимат', 'Блокировка по IP'].filter((t) => !newsText.includes(t))
+  const noNews = ['свежее', 'TurboWarp', 'Антимат', 'Блокировка по IP'].filter((t) => !newsText.includes(t))
   noNews.length === 0 ? ok('свежий выпуск описан') : fail('нет в выпуске', noNews.join(', '))
+
+  // ===== боты на блоках =====
+  await page.goto(`${BASE}/bots`, { waitUntil: 'networkidle' })
+  await page.getByRole('heading', { name: 'Боты', level: 1 }).waitFor({ timeout: 20000 })
+  const botsText = await page.locator('body').innerText()
+  const noHint = ['TurboWarp', 'DashBlocks', 'Расширения', '.sb3'].filter((t) => !botsText.includes(t))
+  noHint.length === 0 ? ok('на странице объяснено, как завести бота') : fail('нет в объяснении', noHint.join(', '))
+
+  const extLink = (await page.locator('code', { hasText: 'bot-extension.js' }).first().innerText()).trim()
+  extLink.startsWith('https://') ? ok('адрес расширения на виду', extLink) : fail('адрес расширения', extLink)
+
+  const extFile = await page.request.get(`${BASE}/bot-extension.js`)
+  const extBody = extFile.ok() ? await extFile.text() : ''
+  extFile.ok() && extBody.includes('Scratch.extensions.register')
+    ? ok('файл расширения отдаётся сайтом', `${Math.round(extBody.length / 1024)} КБ`)
+    : fail('файл расширения', `статус ${extFile.status()}`)
+  const blockCount = (extBody.match(/opcode:/g) ?? []).length
+  blockCount >= 20 ? ok('в расширении больше двадцати блоков', `${blockCount} блоков`) : fail('мало блоков', String(blockCount))
+
+  const botHandle = `uicheck${Date.now() % 100000}`
+  const addBotButton = page.getByRole('button', { name: /^Создать бота$/ })
+  if (await addBotButton.isVisible().catch(() => false)) await addBotButton.click()
+  await page.getByPlaceholder('Погодный бот').fill('Проверочный бот')
+  await page.getByPlaceholder('weather').fill(botHandle)
+  await page.getByPlaceholder(/Говорю погоду/).fill('создан автопроверкой')
+  await page.getByRole('button', { name: 'Создать', exact: true }).click()
+  await page.getByText(`@${botHandle}bot`).waitFor({ timeout: 20000 })
+  ok('бот создаётся прямо со страницы', `@${botHandle}bot`)
+
+  const hidden = await page.locator('code', { hasText: '•••' }).first().isVisible().catch(() => false)
+  hidden ? ok('токен спрятан за точками') : fail('токен виден сразу')
+  await page.getByRole('button', { name: 'Показать', exact: true }).first().click()
+  const token = (await page.locator('code', { hasText: /^tdm_/ }).first().innerText()).trim()
+  ;/^tdm_[0-9a-f]{32}/.test(token) ? ok('кнопка «Показать» открывает токен', `${token.slice(0, 8)}…`) : fail('токен', token)
+
+  ;(await page.getByRole('button', { name: /Приложить/ }).first().isVisible().catch(() => false))
+    ? ok('код .sb3 или .dbp можно приложить')
+    : fail('нет кнопки для кода')
+  ;(await page.locator('select').first().isVisible().catch(() => false))
+    ? ok('бота можно добавить в свой чат')
+    : fail('нет выбора чата')
+
+  const botsStray = strayEmoji(await page.locator('body').innerText())
+  botsStray.length === 0 ? ok('на странице ботов нет старых значков') : fail('старые значки у ботов', botsStray.join(' '))
+
+  page.on('dialog', (d) => d.accept())
+  await page.getByRole('button', { name: 'Удалить бота' }).first().click()
+  await page.waitForTimeout(2000)
+  ;(await page.locator('body').innerText()).includes(`@${botHandle}bot`)
+    ? fail('бот остался после удаления')
+    : ok('бот удаляется со страницы')
 
   // ===== собака в настройках =====
   await page.goto(`${BASE}/settings`, { waitUntil: 'networkidle' })

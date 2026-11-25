@@ -19,11 +19,12 @@ import {
   strikeHint,
   unbanIp,
 } from '../lib/api/moderation'
+import { adminBots, adminSetBotEnabled } from '../lib/api/bots'
 import { chatWords, isChannel } from '../lib/chat'
 import { humanSize } from '../lib/image'
 import { fullDateTime, lastSeenLabel, plural, pluralWord, timeShort, untilLabel } from '../lib/format'
 import { APP_NAME } from '../config'
-import type { AdminModeration, AdminStats, IpBan, Profanity } from '../types/db'
+import type { AdminBot, AdminModeration, AdminStats, IpBan, Profanity } from '../types/db'
 
 /** Панель главного админа: кто пользуется мессенджером и что в нём происходит. */
 export default function Admin() {
@@ -34,22 +35,25 @@ export default function Admin() {
   const [mod, setMod] = useState<AdminModeration | null>(null)
   const [bans, setBans] = useState<IpBan[]>([])
   const [prof, setProf] = useState<Profanity | null>(null)
+  const [bots, setBots] = useState<AdminBot[]>([])
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
 
   const load = useCallback(async () => {
     setBusy(true)
     try {
-      const [s, m, b, p] = await Promise.all([
+      const [s, m, b, p, bt] = await Promise.all([
         getAdminStats(),
         getAdminModeration(),
         getIpBans(),
         getProfanity(),
+        adminBots(),
       ])
       setStats(s)
       setMod(m)
       setBans(b)
       setProf(p)
+      setBots(bt)
       setError(null)
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
@@ -255,6 +259,11 @@ export default function Admin() {
             <Antimat data={prof} onChange={load} onOpen={openProfile} />
           </Panel>
 
+          {/* ===== Боты ===== */}
+          <Panel title="Боты" icon="sparkle">
+            <Bots list={bots} onChange={load} onOpen={openProfile} />
+          </Panel>
+
           <div className="grid gap-5 md:grid-cols-2">
             {/* ===== Люди ===== */}
             <Panel title="Люди" icon="users">
@@ -382,6 +391,70 @@ export default function Admin() {
         </div>
       )}
     </div>
+  )
+}
+
+/** Все боты мессенджера: кто их завёл, сколько пишут и выключатель на всякий случай. */
+function Bots({
+  list,
+  onChange,
+  onOpen,
+}: {
+  list: AdminBot[]
+  onChange: () => Promise<void>
+  onOpen: (id: string) => void
+}) {
+  const [busy, setBusy] = useState<string | null>(null)
+
+  if (list.length === 0) {
+    return <Empty>Ботов пока нет. Их заводят на странице «Боты» в боковом меню.</Empty>
+  }
+
+  const live = list.filter((b) => b.online).length
+  const sent = list.reduce((n, b) => n + b.messages_sent, 0)
+
+  return (
+    <>
+      <div className="mb-3 flex flex-wrap gap-6">
+        <Big value={list.length} label={pluralWord(list.length, 'бот', 'бота', 'ботов')} tone="#58a6ff" />
+        <Big value={live} label="на связи" tone="#3fb950" />
+        <Big value={sent} label="сообщений от ботов" tone="#bc8cff" />
+      </div>
+      {list.map((b) => (
+        <div
+          key={b.id}
+          className="flex flex-wrap items-center gap-2 border-t border-[#1c2430] py-2 text-sm first:border-0"
+        >
+          <button onClick={() => onOpen(b.owner_id)} className="min-w-0 flex-1 text-left">
+            <div className="flex items-center gap-2 truncate font-medium">
+              {b.name}
+              {b.online && <span className="text-xs text-[#3fb950]">на связи</span>}
+              {!b.enabled && <span className="text-xs text-[#f85149]">выключен</span>}
+            </div>
+            <div className="truncate text-xs text-[#64727f]">
+              <span className="text-[#58a6ff]">@{b.username}</span> · хозяин @{b.owner ?? '—'} ·{' '}
+              {plural(b.chats, 'чат', 'чата', 'чатов')} · {b.messages_sent} сообщений
+              {b.code_kind ? ` · ${b.code_kind.toUpperCase()}` : ''}
+            </div>
+          </button>
+          <button
+            disabled={busy === b.id}
+            onClick={async () => {
+              setBusy(b.id)
+              try {
+                await adminSetBotEnabled(b.id, !b.enabled)
+                await onChange()
+              } finally {
+                setBusy(null)
+              }
+            }}
+            className="rounded-lg border border-[#2a3340] px-2.5 py-1 text-xs text-[#9aa7b4] transition hover:text-white disabled:opacity-50"
+          >
+            {b.enabled ? 'Выключить' : 'Включить'}
+          </button>
+        </div>
+      ))}
+    </>
   )
 }
 

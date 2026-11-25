@@ -112,6 +112,8 @@ export function Drawer({
 
           <Divider />
 
+          <Item icon="sparkle" label="Боты" onClick={() => go(() => nav('/bots'))} />
+
           <Item
             icon="gift"
             label="Что нового"
