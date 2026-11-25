@@ -11,7 +11,8 @@ import { Icon, type IconName } from '../components/Icon'
 import { Lightbox } from '../components/Lightbox'
 import { MentionBox, type MentionHandle } from '../components/MentionBox'
 import { MessageAttachment } from '../components/MessageAttachment'
-import { MessageText, mentionsUser } from '../components/MessageText'
+import { MessageText } from '../components/MessageText'
+import { mentionsUser } from '../lib/mentions'
 import { PinnedBar } from '../components/PinnedBar'
 import { Reactions, ReactionPicker } from '../components/Reactions'
 import { VoicePlayer } from '../components/VoicePlayer'
@@ -67,7 +68,8 @@ export default function ChatView() {
   const [caret, setCaret] = useState(0)
   const [searchOpen, setSearchOpen] = useState(false)
   const [searchQuery, setSearchQuery] = useState('')
-  const [hits, setHits] = useState<SearchHit[]>([])
+  /** Находки вместе с запросом, по которому их нашли. */
+  const [found, setFound] = useState<{ q: string; rows: SearchHit[] }>({ q: '', rows: [] })
   const [highlight, setHighlight] = useState<string | null>(null)
   const [hasMore, setHasMore] = useState(false)
   const [dragging, setDragging] = useState(false)
@@ -276,19 +278,20 @@ export default function ChatView() {
   useEffect(() => {
     if (!searchOpen || !id) return
     const q = searchQuery.trim()
-    if (!q) {
-      setHits([])
-      return
-    }
+    if (!q) return
     const h = setTimeout(async () => {
       try {
-        setHits(await searchMessages(q, id))
+        setFound({ q, rows: await searchMessages(q, id) })
       } catch (e) {
         console.error(e)
       }
     }, 300)
     return () => clearTimeout(h)
   }, [searchQuery, searchOpen, id])
+
+  // Пока дописывают запрос, на экране прежние находки: иначе на каждой букве мигало бы
+  // «ничего не найдено». Начали запрос заново — старое сразу пропадает.
+  const hits = found.q && searchQuery.trim().startsWith(found.q) ? found.rows : []
 
   async function loadOlder(): Promise<boolean> {
     if (!id || !cursor.current || loadingMore.current) return false
@@ -603,8 +606,6 @@ export default function ChatView() {
   if (error) return <div className="flex h-full items-center justify-center text-red-300">{error}</div>
   if (!conv) return <div className="flex h-full items-center justify-center text-[#9aa7b4]">Чат не найден</div>
 
-  let lastDay = ''
-
   return (
     <div
       className="relative flex h-full min-h-0 flex-col"
@@ -772,10 +773,10 @@ export default function ChatView() {
           <p className="py-10 text-center text-sm text-[#64727f]">Сообщений пока нет — напишите первое</p>
         )}
 
-        {messages.map((m) => {
+        {messages.map((m, i) => {
           const day = dayLabel(m.created_at)
-          const showDay = day !== lastDay
-          lastDay = day
+          // «Сегодня», «Вчера» и даты показываем там, где день сменился
+          const showDay = i === 0 || day !== dayLabel(messages[i - 1].created_at)
           const mine = m.sender_id === me
           const canEdit =
             mine && !m.deleted_at && !m.pending && m.kind !== 'system' && m.kind !== 'capsule'

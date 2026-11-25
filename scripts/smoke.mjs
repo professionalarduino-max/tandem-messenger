@@ -1201,8 +1201,10 @@ const run = async () => {
 
   const dmByBot = await botRpc('bot_send', { token_in: bot.token, chat_in: `@${friendName}`, body_in: 'личное от бота' })
   check('бот пишет в личку по @имени', dmByBot.ok, dmByBot.ok ? '' : dmByBot.body)
-  const dmSeen = await get(friend.token, `messages?select=body&id=eq.${dmByBot.data?.id}`)
+  const dmSeen = await get(friend.token, `messages?select=body,conversation_id&id=eq.${dmByBot.data?.id}`)
   check('…и человек это сообщение видит', dmSeen[0]?.body === 'личное от бота', String(dmSeen.length))
+  // диалог бот завёл сам — запоминаем, иначе он останется в базе после уборки
+  const botDm = dmSeen[0]?.conversation_id ?? null
 
   await botRpc('bot_set', { token_in: bot.token, key_in: 'счёт', value_in: '7' })
   const recall = await botRpc('bot_get', { token_in: bot.token, key_in: 'счёт' })
@@ -1307,7 +1309,8 @@ const run = async () => {
     })
   }
 
-  await fetch(`${URL}/rest/v1/conversations?id=in.(${gid},${dm},${chId})`, { method: 'DELETE', headers: SH })
+  const testChats = [gid, dm, chId, botDm].filter(Boolean).join(',')
+  await fetch(`${URL}/rest/v1/conversations?id=in.(${testChats})`, { method: 'DELETE', headers: SH })
   for (const u of [friend, stranger, nosy, newbie, guest]) {
     await fetch(`${URL}/auth/v1/admin/users/${u.id}`, { method: 'DELETE', headers: SH })
   }
@@ -1317,7 +1320,7 @@ const run = async () => {
   }
   await fetch(`${URL}/rest/v1/bad_words?word=eq.${encodeURIComponent('ерундистика')}`, { method: 'DELETE', headers: SH })
 
-  const leftovers = await get(admin.token, `conversations?select=id&id=in.(${gid},${dm},${chId})`)
+  const leftovers = await get(admin.token, `conversations?select=id&id=in.(${testChats})`)
   check('тестовые группы, каналы, диалоги, файлы и аккаунты удалены', leftovers.length === 0)
 
   const leftBans = await rpc(admin.token, 'admin_ip_bans')

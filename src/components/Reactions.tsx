@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { Icon } from './Icon'
 import type { Reaction } from '../types/db'
 
-export const QUICK_EMOJI = ['👍', '❤️', '😂', '🔥', '👏', '😮', '😢', '🎉']
+const QUICK_EMOJI = ['👍', '❤️', '😂', '🔥', '👏', '😮', '😢', '🎉']
 
 /** Строка реакций под сообщением: свои подсвечены, клик переключает. */
 export function Reactions({

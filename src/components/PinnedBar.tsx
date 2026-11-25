@@ -3,7 +3,7 @@ import { durationLabel } from '../lib/voice'
 import { Icon } from './Icon'
 import type { Message } from '../types/db'
 
-export function previewOf(m: Message) {
+function previewOf(m: Message) {
   if (m.kind === 'voice') return `Голосовое ${durationLabel(m.duration_ms)}`
   if (m.kind === 'capsule') return m.capsule?.body ?? 'Капсула времени'
   if (m.body) return m.body

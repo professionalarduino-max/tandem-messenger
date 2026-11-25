@@ -3,7 +3,7 @@ import { Link, Outlet, useLocation, useMatch, useNavigate } from 'react-router-d
 import { useAuth } from '../hooks/useAuth'
 import { useProfileCard } from '../hooks/useProfileCard'
 import { Avatar, AdminBadge, BotBadge } from '../components/Avatar'
-import { mentionsUser } from '../components/MessageText'
+import { mentionsUser } from '../lib/mentions'
 import { NewChatModal } from '../components/NewChatModal'
 import { Drawer } from '../components/Drawer'
 import {

@@ -10,7 +10,7 @@ const RECENT_MAX = 32
 /** Поиск по 1900 символам возвращает слишком много — показываем первые осмысленные. */
 const SEARCH_LIMIT = 120
 
-export function rememberEmoji(char: string) {
+function rememberEmoji(char: string) {
   const list = [char, ...readRecent().filter((e) => e !== char)].slice(0, RECENT_MAX)
   try {
     localStorage.setItem(RECENT_KEY, JSON.stringify(list))

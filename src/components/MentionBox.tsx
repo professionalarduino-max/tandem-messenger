@@ -1,6 +1,6 @@
-import { useEffect, useImperativeHandle, useState, type Ref } from 'react'
+import { useEffect, useImperativeHandle, useMemo, useState, type Ref } from 'react'
 import { Avatar } from './Avatar'
-import { NAME_CHAR } from './MessageText'
+import { NAME_CHAR } from '../lib/mentions'
 import { mentionCandidates } from '../lib/api/profiles'
 import type { MentionCandidate } from '../types/db'
 
@@ -33,7 +33,8 @@ export function MentionBox({
   onPick: (username: string, start: number) => void
   handle: Ref<MentionHandle>
 }) {
-  const [list, setList] = useState<MentionCandidate[]>([])
+  /** Ответ базы вместе с запросом, на который он пришёл. */
+  const [answer, setAnswer] = useState<{ q: string; rows: MentionCandidate[] }>({ q: '', rows: [] })
   const [index, setIndex] = useState(0)
   const [closed, setClosed] = useState('')
 
@@ -42,14 +43,20 @@ export function MentionBox({
   const start = found ? caret - query!.length - 1 : 0
   // Esc закрывает подсказку до тех пор, пока человек не изменит набранное слово
   const open = query !== null && closed !== `${start}:${query}`
+  // Пока дописывают буквы, показываем прежних людей — иначе список мигал бы на каждом нажатии.
+  // А когда слово начали заново, старые подсказки сразу исчезают.
+  const list = useMemo(
+    () => (open && query !== null && query.startsWith(answer.q) ? answer.rows : []),
+    [open, query, answer],
+  )
 
   useEffect(() => {
-    if (!open || query === null) return setList([])
+    if (!open || query === null) return
     let fresh = true
     const t = setTimeout(() => {
       mentionCandidates(conversationId, query)
-        .then((r) => fresh && (setList(r), setIndex(0)))
-        .catch(() => fresh && setList([]))
+        .then((r) => fresh && (setAnswer({ q: query, rows: r }), setIndex(0)))
+        .catch(() => fresh && setAnswer({ q: query, rows: [] }))
     }, 120)
     return () => {
       fresh = false

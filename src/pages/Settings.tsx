@@ -37,7 +37,8 @@ export default function Settings() {
   )
   const [muted, setMuted] = useState(notificationsMuted())
   const [installer, setInstaller] = useState<InstallPromptEvent | null>(null)
-  const [installed, setInstalled] = useState(false)
+  // приложение уже установлено, если страница открыта из ярлыка, а не во вкладке браузера
+  const [installed, setInstalled] = useState(() => window.matchMedia('(display-mode: standalone)').matches)
 
   useEffect(() => {
     const onPrompt = (e: Event) => {
@@ -48,7 +49,6 @@ export default function Settings() {
       setInstaller(null)
       setInstalled(true)
     }
-    setInstalled(window.matchMedia('(display-mode: standalone)').matches)
     window.addEventListener('beforeinstallprompt', onPrompt)
     window.addEventListener('appinstalled', onInstalled)
     return () => {
