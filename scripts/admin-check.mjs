@@ -290,6 +290,16 @@ try {
     if (!seen) noRule.push(r)
   }
   noRule.length === 0 ? ok('настройки группы на месте', rules.length + ' переключателей') : fail('нет настроек', noRule.join(', '))
+
+  // список участников: отсюда боту выдают админку, без неё он не закрепляет сообщения
+  await page.getByRole('button', { name: /^(Участники|Подписчики) · \d+/ }).click()
+  const memberRows = page.locator('text=/^@[A-Za-z0-9_]+ · /')
+  await memberRows.first().waitFor({ timeout: 10000 }).catch(() => {})
+  const members = await memberRows.count()
+  members > 0 ? ok('список участников загрузился', `${members} человек`) : fail('участники не загрузились')
+  ;(await page.getByRole('button', { name: /^в админы$/ }).first().isVisible().catch(() => false))
+    ? ok('любого участника, включая бота, можно сделать админом чата')
+    : fail('нет кнопки «в админы»')
   await page.locator('button[title="Закрыть"]').last().click()
 
   // ===== эмодзи из поля ввода =====

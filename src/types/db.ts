@@ -24,6 +24,8 @@ export interface Profile {
   avatar_url: string | null
   bio: string | null
   is_super_admin: boolean
+  /** бот, а не человек: пишет через расширение для Scratch */
+  is_bot: boolean
   last_seen_at: string
   created_at: string
 }
@@ -327,7 +329,7 @@ export interface Member {
   joined_at: string
   profile: Pick<
     Profile,
-    'username' | 'display_name' | 'avatar_url' | 'bio' | 'is_super_admin' | 'last_seen_at'
+    'username' | 'display_name' | 'avatar_url' | 'bio' | 'is_super_admin' | 'last_seen_at' | 'is_bot'
   >
 }
 

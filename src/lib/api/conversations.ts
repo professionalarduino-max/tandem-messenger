@@ -29,7 +29,9 @@ export async function getConversation(id: string): Promise<Conversation | null> 
 export async function listMembers(conversationId: string): Promise<Member[]> {
   const { data, error } = await supabase
     .from('conversation_members')
-    .select('user_id, role, joined_at, profile:profiles(username, display_name, avatar_url, bio, is_super_admin, last_seen_at)')
+    .select(
+      'user_id, role, joined_at, profile:profiles(username, display_name, avatar_url, bio, is_super_admin, last_seen_at, is_bot)',
+    )
     .eq('conversation_id', conversationId)
     .order('role', { ascending: true })
   if (error) throw error

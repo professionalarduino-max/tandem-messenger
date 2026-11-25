@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useProfileCard } from '../hooks/useProfileCard'
-import { Avatar, AdminBadge } from './Avatar'
+import { Avatar, AdminBadge, BotBadge } from './Avatar'
 import { AvatarPicker } from './AvatarPicker'
 import { Icon, type IconName } from './Icon'
 import { InvitePanel } from './InvitePanel'
@@ -389,6 +389,7 @@ export function GroupSettingsModal({
                   <button onClick={() => openProfile(m.user_id)} className="min-w-0 flex-1 text-left">
                     <div className="flex items-center gap-2 truncate text-sm">
                       {m.profile.display_name ?? m.profile.username}
+                      {m.profile.is_bot && <BotBadge title="Бот на блоках. Нужна админка — выдайте её здесь" />}
                       {m.profile.is_super_admin && <AdminBadge />}
                       {!m.profile.is_super_admin && m.role === 'admin' && (
                         <span className="text-[10px] tracking-wide text-[#58a6ff] uppercase">админ</span>
