@@ -644,6 +644,63 @@ const run = async () => {
   const leftFromStranger = await get(admin.token, `messages?select=id&sender_id=eq.${stranger.id}&deleted_at=is.null`)
   check('админ стирает все сообщения человека', leftFromStranger.length === 0, `удалено: ${purged}`)
 
+  // Роль в чате — тоже строка в своей же строке таблицы, так что проверяем, что её не подкрутить самому.
+  const selfPromote = await patch(
+    stranger.token,
+    `conversation_members?conversation_id=eq.${gid}&user_id=eq.${stranger.id}`,
+    { role: 'admin' },
+  )
+  const selfRole = await get(admin.token, `conversation_members?select=role&conversation_id=eq.${gid}&user_id=eq.${stranger.id}`)
+  check(
+    'участник не делает себя админом чата',
+    !selfPromote.ok && selfRole[0]?.role === 'member',
+    `статус ${selfPromote.status}, роль: ${selfRole[0]?.role}`,
+  )
+
+  const byOwner = await patch(
+    friend.token,
+    `conversation_members?conversation_id=eq.${gid}&user_id=eq.${stranger.id}`,
+    { role: 'admin' },
+  )
+  check('а админ чата выдаёт админку другому', byOwner.ok && byOwner.rows[0]?.role === 'admin', `статус ${byOwner.status}`)
+  const byOwnerBack = await patch(
+    friend.token,
+    `conversation_members?conversation_id=eq.${gid}&user_id=eq.${stranger.id}`,
+    { role: 'member' },
+  )
+  check('…и снимает её обратно', byOwnerBack.ok && byOwnerBack.rows[0]?.role === 'member', `статус ${byOwnerBack.status}`)
+
+  // Корону дают вместе с админкой во всех группах — значит и забирать надо вместе,
+  // иначе «снять админа» выглядит так, будто кнопка не работает.
+  // Роль ставим служебным ключом: настоящая выдача короны засунула бы человека во все группы базы.
+  await fetch(`${URL}/rest/v1/conversation_members?conversation_id=eq.${gid}&user_id=eq.${stranger.id}`, {
+    method: 'PATCH',
+    headers: SERVICE_H,
+    body: JSON.stringify({ role: 'admin' }),
+  })
+  await rpc(admin.token, 'admin_set_super', { uid_in: stranger.id, value: false })
+  const afterDemote = await get(admin.token, `conversation_members?select=role&conversation_id=eq.${gid}&user_id=eq.${stranger.id}`)
+  const demoteLeftovers = await get(admin.token, `conversation_members?select=conversation_id&user_id=eq.${stranger.id}&role=eq.admin`)
+  check('снятие админки забирает права в чате', afterDemote[0]?.role === 'member', `роль: ${afterDemote[0]?.role}`)
+  check('…и не оставляет их ни в одном чате', demoteLeftovers.length === 0, `осталось: ${demoteLeftovers.length}`)
+
+  await fetch(`${URL}/rest/v1/profiles?id=eq.${stranger.id}`, {
+    method: 'PATCH',
+    headers: SERVICE_H,
+    body: JSON.stringify({ is_super_admin: true }),
+  })
+  await fetch(`${URL}/rest/v1/conversation_members?conversation_id=eq.${gid}&user_id=eq.${stranger.id}`, {
+    method: 'PATCH',
+    headers: SERVICE_H,
+    body: JSON.stringify({ role: 'admin' }),
+  })
+  await rpc(admin.token, 'admin_set_ban', { uid_in: stranger.id, banned: true, reason_in: 'бан главного админа' })
+  const bannedCrown = await get(admin.token, `profiles?select=is_super_admin&id=eq.${stranger.id}`)
+  const bannedRoles = await get(admin.token, `conversation_members?select=conversation_id&user_id=eq.${stranger.id}&role=eq.admin`)
+  check('бан снимает корону главного админа', bannedCrown[0]?.is_super_admin === false, `флаг: ${bannedCrown[0]?.is_super_admin}`)
+  check('…и админку в чатах вместе с ней', bannedRoles.length === 0, `осталось: ${bannedRoles.length}`)
+  await rpc(admin.token, 'admin_set_ban', { uid_in: stranger.id, banned: false })
+
   const modList = await rpc(admin.token, 'admin_moderation')
   check('сводка модерации собирается', Array.isArray(modList?.banned) && Array.isArray(modList?.pinned))
   const modDenied = await tryRpc(friend.token, 'admin_moderation')

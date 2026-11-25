@@ -306,7 +306,13 @@ export function ProfileModal({
                             icon="ban"
                             tone="#f85149"
                             busy={busy}
-                            onClick={() => run('Заблокирован', () => setBan(card.id, true, reason))}
+                            onClick={() =>
+                              run(
+                                // блокировка главного админа заодно снимает с него права
+                                card.is_super_admin ? 'Заблокирован, права админа сняты' : 'Заблокирован',
+                                () => setBan(card.id, true, reason),
+                              )
+                            }
                           >
                             Заблокировать
                           </Action>
@@ -329,7 +335,7 @@ export function ProfileModal({
                           busy={busy}
                           onClick={() =>
                             run(
-                              card.is_super_admin ? 'Права админа сняты' : 'Теперь он админ',
+                              card.is_super_admin ? 'Права админа сняты во всех чатах' : 'Теперь он админ',
                               () => setSuperAdmin(card.id, !card.is_super_admin),
                             )
                           }

@@ -87,6 +87,21 @@ export function GroupSettingsModal({
     await onChanged()
   }
 
+  /** Действие над участником. Отказ базы показываем там же, где «Сохранено», а не прячем. */
+  async function act(action: () => Promise<unknown>, done: string) {
+    setBusy(true)
+    setStatus(null)
+    try {
+      await action()
+      await reloadMembers()
+      setStatus(done)
+    } catch (err) {
+      setStatus(err instanceof Error ? err.message : String(err))
+    } finally {
+      setBusy(false)
+    }
+  }
+
   async function save(patch: Parameters<typeof updateGroup>[1], done = 'Сохранено') {
     setBusy(true)
     setStatus(null)
@@ -404,24 +419,38 @@ export function GroupSettingsModal({
                   {isAdmin && m.user_id !== myId && !m.profile.is_super_admin && (
                     <div className="flex shrink-0 gap-1">
                       <button
-                        onClick={async () => {
-                          await setMemberRole(conversation.id, m.user_id, m.role === 'admin' ? 'member' : 'admin')
-                          await reloadMembers()
-                        }}
-                        className="rounded-md border border-[#2a3340] px-2 py-1 text-xs text-[#9aa7b4] hover:text-white"
+                        disabled={busy}
+                        onClick={() =>
+                          act(
+                            () =>
+                              setMemberRole(
+                                conversation.id,
+                                m.user_id,
+                                m.role === 'admin' ? 'member' : 'admin',
+                              ),
+                            m.role === 'admin' ? 'Админка снята' : 'Теперь админ чата',
+                          )
+                        }
+                        className="rounded-md border border-[#2a3340] px-2 py-1 text-xs text-[#9aa7b4] hover:text-white disabled:opacity-50"
                       >
                         {m.role === 'admin' ? 'снять' : 'в админы'}
                       </button>
                       <button
-                        onClick={async () => {
-                          await removeMember(conversation.id, m.user_id)
-                          await reloadMembers()
-                        }}
-                        className="rounded-md border border-red-500/30 px-2 py-1 text-xs text-red-300"
+                        disabled={busy}
+                        onClick={() => act(() => removeMember(conversation.id, m.user_id), 'Выгнан')}
+                        className="rounded-md border border-red-500/30 px-2 py-1 text-xs text-red-300 disabled:opacity-50"
                       >
                         выгнать
                       </button>
                     </div>
+                  )}
+                  {/* у главного админа права глобальные: в чате их не снять, и молчать об этом нечестно */}
+                  {isAdmin && m.user_id !== myId && m.profile.is_super_admin && (
+                    <span className="shrink-0 text-right text-[11px] leading-tight text-[#64727f]">
+                      главный админ
+                      <br />
+                      снимается в профиле
+                    </span>
                   )}
                 </div>
               ))}
